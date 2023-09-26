@@ -19,7 +19,7 @@ For each of the categories I list some of the top projects, the full catalog can
 
 ### 1. University
 
-* Bachelor Thesis - Where diversity works
+* [Bachelor Thesis - Where diversity works](https://github.com/samrauh/portfolio/tree/main/Projects/University/Bachelor-Thesis)
 * Computational Social Science - Newspaper coverage of wars in the 21st century
 * Markets and Norms - Price Discrimination in the Swiss Car Insurance Market
 
