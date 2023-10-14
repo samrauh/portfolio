@@ -1,0 +1,2120 @@
+---
+title: "Newspaper coverage of wars in the 21st century"
+subtitle: "Computational Social Science - 2022"
+author: "Samuel Rauh"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+# Introduction
+
+The relationship between the media and wars has always been a controversial one.
+In such times it is very difficult to get down to the source and the large media companies are most of the time the only ones which have the ability to cover the state of a war since a whole region is in a state of emergency and it is almost impossible for normal citizens to get information otherwise.
+The media is in a critical position because they have the crucial ability to get the information and it is their determination to distribute it.
+But from the perspective of the media they are companies with a financial incentive.
+They earn a lot of money from international crises.
+The two motives of being a reliable source and attracting a large audience might contradict with each other.
+In addition have most large media groups a stronger or less strong political agenda which they push and which can have a severe impact on how they cover news. This can result in multiple extremely different portrayals of the same topic.
+This critical role of the media in times of war has motivated me to have a closer look at how different media sources portray different wars.
+
+# Methods
+
+To collect the data I use the "The Guardian" API of the British newspaper and the "New York Times" API of the American Newspaper.
+After cleaning up the data I will perform three text analysis procedures.
+First a sentiment analysis to check if there are differences in the positivity score between the wars but also between the two newspapers.
+Second I will do a word frequency analysis and look at the most used words.
+And third I will use the " Lexicoder policy agendas" dictionary to do a topic analysis.
+I chose to look at three different wars: The war in Afghanistan, the war going on right now in the Ukraine and the civil war in Syria.
+I have chosen those three because they are all different from each other in the point of how the "West" relates to them.
+The war in Afghanistan was driven by the USA following the 9/11 terrorist attack in New York.
+The war in Ukraine is geographically and also politically closer to the "West" but western forces have (not yet) intervened themselves.
+The war in Syria has been going on for a long time and has had a lot of media coverage in the past, it is geographically and cultural much further away from the "West" but the USA and its allies also have played a controversial role in it.
+
+## Limitations
+
+The primary limitation I had to set were the numbers of newspaper and wars I included in the analysis.
+I initially wanted to also use the "Die Zeit" API to have a newspaper in a different language and from another different country but the service has been stopped due to technical difficulties.
+Since there are only limited APIs I chose to stick to these two.
+But it would have been very interesting to also have a newspaper with a potentially right leaning political orientation since these two are both more liberal.
+I limited myself to those three wars since I don't think that it would make much of a difference to look at more wars.
+I think that differences in the reporting of the wars would show when comparing these three.
+For further studies it would be interesting to look at wars from longer time ago.
+I'm sure there would be interesting finding when looking at the Vietnam war or even the 2. world war.
+
+# Data Collection and Processing
+
+*Not all code chunks are run or shown, this is for the reason of illustration and very long time of gathering the data. All the data used is saved in the "Data" folder,*
+
+### Libraires
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(quanteda)
+library(jsonlite)
+library(stringr)
+library(tidyverse)
+library(ggplot2)
+library(rvest)
+library(stringr)
+library(quanteda.textplots)
+```
+
+## The Guardian
+
+URL generator for the Guardian API
+```{r}
+guardian_key = read_lines("guardian_key.txt")
+
+guardian_url = function(search_word, date_from='', date_to='') {
+  search_word <- str_replace(search_word, ' ', '%20')
+  
+  if (date_from == '' | date_to == '') {
+    url <- paste0('http://content.guardianapis.com/search?q=', search_word,
+                  '&show-blocks=all&api-key=', guardian_key, sep='')
+  } else {
+    url <- paste0('http://content.guardianapis.com/search?q=', search_word,
+                  '&from-date=', date_from, '&to-date=', date_to,
+                  '&show-blocks=all&api-key=', guardian_key, sep='')
+  }
+  url
+}
+```
+
+### Afghanistan War
+
+#### Get Data
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, eval = FALSE}
+#There are 63'723 articles which is too much, it exceeds the rate limit of the Guardian API
+#that's why I will extract 10% of all the pages of each relevant year.
+
+afgh_list <- vector("list")
+counter <- 1
+
+for (year in 1999:2022) {
+  base_url <- guardian_url('afghanistan war', paste0(year, '-01-01'), 
+                           paste0(year, '-12-31'))
+  n_results <- fromJSON(base_url) %>% .$response %>% .$total
+  max_pages <- ceiling(((n_results[1] / 10)-1))
+  random_pages <- sample.int(max_pages, max_pages/10)
+  print(year)
+
+  
+  for(i in 1:(max_pages/10)){
+    x=random_pages[i]
+    print(i)
+    url <- paste0(base_url, "&page=", x, sep='')
+      GuardSearch <- fromJSON(url, flatten = TRUE) %>%
+        data.frame(.,stringsAsFactors = FALSE) 
+    afgh_list[[counter]] <- GuardSearch
+    counter <- counter + 1
+    #Sys.sleep(1)
+}
+}
+
+afgh_results <- rbind_pages(afgh_list)
+
+save(afgh_results, file = "Data/afgh_results.RData")
+```
+
+#### Data Cleaning
+
+```{r results='hide'}
+load('Data/afgh_results.RData')
+
+#Pick filter out the results of the type "article"
+afgh_results <- afgh_results %>% 
+  filter(response.results.type == "article") %>% 
+  unnest(cols = response.results.blocks.body)
+
+# Make a selection of the important variables
+
+afgh <- afgh_results %>%
+  select(id = response.results.id,
+         url = response.results.webUrl,
+         title = response.results.webTitle,
+         text = bodyTextSummary,
+         date = response.results.webPublicationDate,
+         section = response.results.sectionName,
+         total_year = response.total
+         )
+
+afgh$text_len <- nchar(afgh$text)
+summary(afgh$text_len)
+
+afgh$text[afgh$text_len < 50]
+
+#filter out articles with no significant text
+afgh <- afgh %>% 
+  filter(!text %in% c("", " ", "."))
+summary(afgh$text_len)
+
+#extract date and year
+
+afgh$date <- gsub("T.*",
+                  "",
+                  afgh$date) %>% as.Date()
+
+afgh$year <- afgh$date %>%
+  gsub("([0-9]{4}).*",
+       "\\1", .) %>% as.numeric
+
+
+afgh$total_year <- afgh$total_year %>%
+  as.numeric
+
+save(afgh, file = "Data/afgh.RData")
+
+```
+
+#### Basic Analysis
+
+```{r}
+# Create a histogram to show the distribution of articles
+
+load("Data/afgh.RData")
+afgh_hist <- ggplot(afgh, aes(x=date))+
+  geom_histogram(binwidth = 200, fill='lightblue', color="black")+
+  scale_x_date(date_breaks = "3 years", date_labels = "%Y")+
+  theme_classic()
+
+
+afgh_hist_year <- afgh[!duplicated(afgh[ , c("year")]), ] %>%
+  select(total_year, year) %>%
+  ggplot(aes(x=year, y=total_year))+
+  geom_bar(stat='identity', fill = "lightblue", color="black")+
+  labs(title = "Distribution of articles per year", y="Number of articles per year")
+afgh_hist_year
+```
+
+#### Create a corpus and tokens
+
+```{r warning=FALSE, results='hide'}
+afgh_corpus <- corpus(afgh,
+                      text_field = "text")
+
+summary(afgh_corpus) %>% head
+docvars(afgh_corpus) %>% 
+  head
+
+afgh_corpus[1]
+
+
+afgh_toks <- tokens(afgh_corpus,
+                    what = c("word"),
+                    remove_separators = TRUE, 
+                    include_docvars = TRUE,
+                    ngrams = 1L,
+                    remove_numbers = FALSE, 
+                    remove_punct = TRUE,
+                    remove_symbols = FALSE, 
+                    remove_hyphens = FALSE)
+
+afgh_toks %>% head
+
+afgh_toks <- afgh_toks %>% 
+  tokens_tolower %>%
+  tokens_remove(stopwords("english"), padding = TRUE) %>%
+  tokens_remove("") %>%
+  tokens_wordstem(language = "english")
+
+save(afgh_toks, file = "Data/afgh_toks.RData")
+
+```
+
+#### Sentiment Analysis
+
+```{r}
+load("Data/afgh_toks.RData")
+load("Data/afgh.RData")
+
+# make a sentiment analysis on the ratio of positive to negative words in each article
+
+afgh_toks_sent <- tokens_lookup(afgh_toks,
+                                dictionary =  data_dictionary_LSD2015[1:2])
+#afgh_toks_sent %>% head
+
+afgh_dfm_sent <- dfm(afgh_toks_sent)
+#afgh_dfm_sent %>% head
+
+afgh_pos_neg <- afgh_dfm_sent %>% convert(.,to = "data.frame") %>% 
+  mutate(pos_to_neg = (positive / (positive + negative)))
+
+#summary(afgh_pos_neg)
+# afgh_pos_neg %>% filter(is.na(afgh_pos_neg$pos_to_neg))
+# 1 NA in year 2002
+# Row has 0 negative and 0 positive -> NaN -> discard
+
+afgh_sent <- afgh
+
+afgh_sent$pos_neg <- afgh_pos_neg$pos_to_neg
+afgh_sent <- afgh_sent %>% filter(!is.na(afgh_sent$pos_neg))
+
+# create plots to show the results
+
+plot_afgh_sent <- ggplot(afgh_sent, aes(x=date, y=pos_neg))+
+  geom_point(size=2, alpha=0.2)+
+  labs(title = "Sentiment Analysis Afghanistan war", y="Positivity Score")
+plot_afgh_sent
+
+afgh_by_year <- afgh_sent$pos_neg %>% 
+  aggregate(by=list(afgh_sent$year), FUN = mean) %>% rename(year = Group.1,
+                                                       pos_neg = x)
+# afgh_by_year
+
+plot_afgh_pos_by_year <- ggplot(afgh_by_year, aes(x=year, y=pos_neg))+
+  geom_line(color="royalblue", size=1)+
+  theme_light()+
+  ylim(0.35, 0.5)+
+  labs(y="Positivity Score", title = "Sentiment Analysis Afghanistan war by year")
+plot_afgh_pos_by_year
+
+
+```
+
+#### Word Frequency
+
+```{r}
+load("Data/afgh_toks.RData")
+
+
+# load list with the most common words in English to remove them from the tokens
+
+common_words <- read.delim("Data/1-1000.txt", header = FALSE) %>%
+  head(200) %>% 
+  as.vector()
+common_words <- common_words$V1
+
+# removing the top 200 words from the tokens
+afgh_toks_wordcount <- afgh_toks %>% 
+  tokens_remove(common_words) 
+
+afgh_dfm <- dfm(afgh_toks_wordcount)
+
+
+
+afgh_topwords <- topfeatures(afgh_dfm, 50) %>%
+  data.frame(word=names(.),
+             frequency =.,
+             row.names = c())
+
+afgh_topwords
+
+save(afgh_dfm, file = "Data/afgh_dfm.RData")
+```
+
+#### Policy agendas analysis
+
+```{r warning=FALSE}
+load("Data/afgh_toks.RData")
+load("Data/afgh.RData")
+
+# Load the Lexicoder policy agendas
+policyagendas <- dictionary(file = "Data/policy_agendas_english.lcd")
+
+# lookup the policy agendas dictionary and give each article a score
+afgh_toks_pol <- tokens_lookup(afgh_toks, dictionary = policyagendas)
+afgh_pol <- dfm(afgh_toks_pol) %>% 
+  convert(to = "data.frame") %>%
+  select(-doc_id)
+
+# divide the values for each row through the sum of each row to get relative values for the agendas for each article
+afgh_pol <- afgh_pol / rowSums(afgh_pol)
+
+afgh_pol$year <- afgh$year
+
+afgh_pol <- drop_na(afgh_pol)
+
+# group by year
+afgh_pol_by_year <- afgh_pol %>% 
+  group_by(year) %>%
+  summarise_each(funs = sum)
+  
+# Plot the results to better inspect them
+afgh_pol_by_year_plot1 <- afgh_pol_by_year %>%
+  pivot_longer(cols = 2:29, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy agendas in 'Afghanistan War' articles in The Guardian",
+       caption = "Dictionary for classification: Lexicoder policy agendas")
+afgh_pol_by_year_plot1
+
+# select some agendas which seam important
+afgh_pol_by_year_plot_select <- afgh_pol_by_year %>%
+  select(year, defence, energy, foreign_trade, intl_affairs, religion, crime) %>%
+  pivot_longer(cols = 2:7, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Afghanistan War' articles in The Guardian",
+       subtitle = "SELECTION", caption = "Dictionary for classification: Lexicoder policy agendas")
+afgh_pol_by_year_plot_select
+
+save(afgh_pol, file = "Data/afgh_pol.RData")
+
+```
+
+The code for the other wars are not included in the rendered markdown since they are almost identical to the coverage of the Afghanistan War
+
+### Syria War
+
+```{r eval=FALSE, include=FALSE}
+
+syria_list <- vector("list")
+counter <- 1
+
+for (year in 2011:2022) {
+  base_url <- guardian_url('syria war', paste0(year, '-01-01'), 
+                           paste0(year, '-12-31'))
+  n_results <- fromJSON(base_url) %>% .$response %>% .$total
+  max_pages <- ceiling(((n_results[1] / 10)-1))
+  random_pages <- sample.int(max_pages, max_pages/10)
+  print(year)
+
+  
+  for(i in 1:(max_pages/10)){
+    x=random_pages[i]
+    print(i)
+    url <- paste0(base_url, "&page=", x, sep='')
+      GuardSearch <- fromJSON(url, flatten = TRUE) %>%
+        data.frame(.,stringsAsFactors = FALSE) 
+    syria_list[[counter]] <- GuardSearch
+    counter <- counter + 1
+    #Sys.sleep(1)
+}
+}
+
+syria_results <- rbind_pages(syria_list)
+
+save(syria_results, file = "Data/syria_results.RData")
+```
+
+```{r eval=FALSE, include=FALSE}
+load('Data/syria_results.RData')
+
+glimpse(syria_results)
+#Pick filter out the results of the type "article"
+syria_results <- syria_results %>% 
+  filter(response.results.type == "article") %>% 
+  unnest(cols = response.results.blocks.body)
+
+glimpse(syria_results)
+
+syria <- syria_results %>%
+  select(id = response.results.id,
+         url = response.results.webUrl,
+         title = response.results.webTitle,
+         text = bodyTextSummary,
+         date = response.results.webPublicationDate,
+         section = response.results.sectionName,
+         total_year = response.total
+         )
+
+syria$text_len <- nchar(syria$text)
+summary(syria$text_len)
+
+syria$text[syria$text_len < 50]
+
+#filter out articles with no significant text
+syria <- syria %>% 
+  filter(!text %in% c("", " ", "."))
+summary(syria$text_len)
+
+#extracte date and year
+
+syria$date <- gsub("T.*",
+                  "",
+                  syria$date) %>% as.Date()
+
+syria$year <- syria$date %>%
+  gsub("([0-9]{4}).*",
+       "\\1", .) %>% as.numeric
+
+
+syria$total_year <- syria$total_year %>%
+  as.numeric
+
+save(syria, file = "Data/syria.RData")
+
+```
+
+#### Basic Analysis
+
+```{r echo=FALSE}
+load("Data/syria.RData")
+syria_hist <- ggplot(syria, aes(x=date))+
+  geom_histogram(binwidth = 200, fill='lightblue', color="black")+
+  scale_x_date(date_breaks = "3 years", date_labels = "%Y")+
+  theme_classic()
+
+
+syria_hist_year <- syria[!duplicated(syria[ , c("year")]), ] %>%
+  select(total_year, year) %>%
+  ggplot(aes(x=year, y=total_year))+
+  geom_bar(stat='identity', fill = "lightblue", color="black")+
+  labs(title = "Distribution of articles per year", y="Number of articles per year")
+syria_hist_year
+```
+
+```{r include=FALSE}
+syria_corpus <- corpus(syria,
+                      text_field = "text")
+
+summary(syria_corpus) %>% head
+docvars(syria_corpus) %>% 
+  head
+
+syria_corpus[1]
+
+
+syria_toks <- tokens(syria_corpus,
+                    what = c("word"),
+                    remove_separators = TRUE, 
+                    include_docvars = TRUE,
+                    ngrams = 1L,
+                    remove_numbers = FALSE, 
+                    remove_punct = TRUE,
+                    remove_symbols = FALSE, 
+                    remove_hyphens = FALSE)
+
+syria_toks %>% head
+
+syria_toks <- syria_toks %>% 
+  tokens_tolower %>%
+  tokens_remove(stopwords("english"), padding = TRUE) %>%
+  tokens_remove("") %>%
+  tokens_wordstem(language = "english")
+
+save(syria_toks, file = "Data/syria_toks.RData")
+
+```
+
+#### Sentiment Analysis
+
+```{r echo=FALSE, warning=FALSE}
+load("Data/syria_toks.RData")
+load("Data/syria.RData")
+
+syria_toks_sent <- tokens_lookup(syria_toks,
+                                dictionary =  data_dictionary_LSD2015[1:2])
+# syria_toks_sent %>% head
+
+syria_dfm_sent <- dfm(syria_toks_sent)
+# syria_dfm_sent %>% head
+
+syria_pos_neg <- syria_dfm_sent %>% convert(.,to = "data.frame") %>% 
+  mutate(pos_to_neg = positive / (positive + negative))
+
+# summary(syria_pos_neg)
+#syria_pos_neg %>% filter(is.na(syria_pos_neg$pos_to_neg))
+# 1 NA in year 2002
+# Row has 0 negative and 0 positive -> NaN -> discard
+
+syria_sent <- syria
+
+syria_sent$pos_neg <- syria_pos_neg$pos_to_neg
+syria_sent <- syria_sent %>% filter(!is.na(syria_sent$pos_neg))
+
+plot_syria_sent <- ggplot(syria_sent, aes(x=date, y=pos_neg))+
+  geom_point(size=2, alpha=0.2)+
+  labs(title = "Sentiment Analysis Syria war", y="Positivity Score")
+plot_syria_sent
+
+syria_by_year <- syria_sent$pos_neg %>% 
+  aggregate(by=list(syria_sent$year), FUN = mean) %>% rename(year = Group.1,
+                                                       pos_neg = x)
+# syria_by_year
+
+plot_syria_pos_by_year <- ggplot(syria_by_year, aes(x=year, y=pos_neg))+
+  geom_line(color="royalblue", size=1)+
+  theme_light()+
+  ylim(0.35, 0.5)+
+  labs(title = "Sentiment Analysis Syria war by year", y="Positivity Score")
+plot_syria_pos_by_year
+
+```
+
+#### Word Frequency
+
+```{r echo=FALSE, warning=FALSE}
+load("Data/syria_toks.RData")
+
+
+# create list with the most common words in english to remove them from the tokens
+common_words <- read.delim("Data/1-1000.txt", header = FALSE) %>%
+  head(200) %>% 
+  as.vector()
+common_words <- common_words$V1
+
+syria_toks_wordcount <- syria_toks %>% 
+  tokens_remove(common_words) 
+
+syria_dfm <- dfm(syria_toks_wordcount)
+
+
+
+syria_topwords <- topfeatures(syria_dfm, 50) %>%
+  data.frame(word=names(.),
+             frequency =.,
+             row.names = c())
+
+syria_topwords
+save(syria_dfm, file = "Data/syria_dfm.RData")
+
+```
+
+#### Policy agendas analysis
+
+```{r echo=FALSE}
+load("Data/syria_toks.RData")
+load("Data/syria.RData")
+
+policyagendas <- dictionary(file = "Data/policy_agendas_english.lcd")
+
+syria_toks_pol <- tokens_lookup(syria_toks, dictionary = policyagendas)
+syria_pol <- dfm(syria_toks_pol) %>% 
+  convert(to = "data.frame") %>%
+  select(-doc_id)
+
+syria_pol <- syria_pol / rowSums(syria_pol)
+
+syria_pol$year <- syria$year
+
+syria_pol <- drop_na(syria_pol)
+
+syria_pol_by_year <- syria_pol %>% 
+  group_by(year) %>%
+  summarise_each(funs = sum)
+  
+
+syria_pol_by_year_plot1 <- syria_pol_by_year %>%
+  pivot_longer(cols = 2:29, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy agendas in 'Syria war' articles in The Guardian",
+       caption = "Dictionary for classification: Lexicoder policy agendas")
+syria_pol_by_year_plot1
+
+syria_pol_by_year_plot_select <- syria_pol_by_year %>%
+  select(year, defence, energy, foreign_trade, intl_affairs, religion, crime) %>%
+  pivot_longer(cols = 2:7, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Syria war' articles in The Guardian",
+       subtitle = "SELECTION", caption = "Dictionary for classification: Lexicoder policy agendas")
+syria_pol_by_year_plot_select
+
+# syria_pol_by_year
+
+save(syria_pol, file = "Data/syria_pol.RData")
+
+```
+
+### Ukraine War
+
+```{r eval=FALSE, include=FALSE}
+# When running the code the Guardian API gets errors on random urls.
+# When running those urls several seconds later, they load normally.
+# That's why I have implemented the tryCatch function to overcome the errors
+
+ukraine_list <- vector("list")
+counter <- 1
+errors <- 0
+
+for (year in 2014:2022) {
+  base_url <- guardian_url('ukraine war', paste0(year, '-01-01'), 
+                           paste0(year, '-12-31'))
+  n_results <- fromJSON(base_url) %>% .$response %>% .$total
+  max_pages <- ceiling(((n_results[1] / 10)-1))
+  random_pages <- sample.int(max_pages, max_pages/10)
+  print(year)
+  print(paste0("Max Page:", max_pages))
+
+  
+  for(i in 1:(max_pages/10)){
+    tryCatch({
+    x=random_pages[i]
+    print(i)
+    print(paste0("Page:", x))
+    url <- paste0(base_url, "&page=", x, sep='')
+      GuardSearch <- fromJSON(url, flatten = TRUE) %>%
+        data.frame(.,stringsAsFactors = FALSE) 
+    ukraine_list[[counter]] <- GuardSearch
+    counter <- counter + 1
+    #Sys.sleep(1)
+    }, error=function(e){
+      errors <- errors + 1
+      })
+
+}
+}
+
+print(errors)
+
+ukraine_results <- rbind_pages(ukraine_list)
+
+save(ukraine_results, file = "Data/ukraine_results.RData")
+```
+
+```{r include=FALSE}
+load('Data/ukraine_results.RData')
+
+#Pick filter out the results of the type "article"
+ukraine_results <- ukraine_results %>% 
+  filter(response.results.type == "article") %>% 
+  unnest(cols = response.results.blocks.body)
+ukraine_results$response.total
+
+ukraine <- ukraine_results %>%
+  select(id = response.results.id,
+         url = response.results.webUrl,
+         title = response.results.webTitle,
+         text = bodyTextSummary,
+         date = response.results.webPublicationDate,
+         section = response.results.sectionName,
+         total_year = response.total
+         )
+
+ukraine$text_len <- nchar(ukraine$text)
+summary(ukraine$text_len)
+
+ukraine$text[ukraine$text_len < 50]
+
+#filter out articles with no significant text
+ukraine <- ukraine %>% 
+  filter(!text %in% c("", " ", "."))
+summary(ukraine$text_len)
+
+#extracte date and year
+
+ukraine$date <- gsub("T.*",
+                  "",
+                  ukraine$date) %>% as.Date()
+
+ukraine$year <- ukraine$date %>%
+  gsub("([0-9]{4}).*",
+       "\\1", .) %>% as.numeric
+
+save(ukraine, file = "Data/ukraine.RData")
+```
+
+#### Basic Analysis
+
+```{r echo=FALSE}
+load("Data/ukraine.RData")
+
+ukraine_hist <- ggplot(ukraine, aes(x=date))+
+  geom_histogram(binwidth = 200, fill='lightblue', color="black")+
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y")+
+  theme_classic()
+# ukraine_hist
+
+ukraine_hist_year <- ukraine[!duplicated(ukraine[ , c("year")]), ] %>%
+  select(total_year, year) %>%
+  ggplot(aes(x=year, y=total_year))+
+  geom_bar(stat='identity', fill = "lightblue", color="black")+
+  labs(title = "Distribution of articles per year", y="Number of articles per year")
+ukraine_hist_year
+
+```
+
+```{r include=FALSE}
+ukraine_corpus <- corpus(ukraine,
+                      text_field = "text")
+
+# summary(ukraine_corpus) %>% head
+# docvars(ukraine_corpus) %>% 
+#   head
+
+ukraine_corpus[1]
+
+
+ukraine_toks <- tokens(ukraine_corpus,
+                    what = c("word"),
+                    remove_separators = TRUE, 
+                    include_docvars = TRUE,
+                    ngrams = 1L,
+                    remove_numbers = FALSE, 
+                    remove_punct = TRUE,
+                    remove_symbols = FALSE, 
+                    remove_hyphens = FALSE)
+
+# ukraine_toks %>% head
+
+ukraine_toks <- ukraine_toks %>% 
+  tokens_tolower %>%
+  tokens_remove(stopwords("english"), padding = TRUE) %>%
+  tokens_remove("") %>%
+  tokens_wordstem(language = "english")
+
+save(ukraine_toks, file = "Data/ukraine_toks.RData")
+
+```
+
+#### Sentiment Analysis
+
+```{r echo=FALSE}
+load("Data/ukraine_toks.RData")
+load("Data/ukraine.RData")
+
+ukraine_toks_sent <- tokens_lookup(ukraine_toks,
+                                dictionary =  data_dictionary_LSD2015[1:2])
+# ukraine_toks_sent %>% head
+
+ukraine_dfm_sent <- dfm(ukraine_toks_sent)
+# ukraine_dfm_sent %>% head
+
+ukraine_pos_neg <- ukraine_dfm_sent %>% convert(.,to = "data.frame") %>% 
+  mutate(pos_to_neg = positive / (positive + negative))
+
+# summary(ukraine_pos_neg)
+#ukraine_pos_neg %>% filter(is.na(ukraine_pos_neg$pos_to_neg))
+# 1 NA in year 2002
+# Row has 0 negative and 0 positive -> NaN -> discard
+
+ukraine_sent <- ukraine
+
+ukraine_sent$pos_neg <- ukraine_pos_neg$pos_to_neg
+ukraine_sent <- ukraine_sent %>% filter(!is.na(ukraine_sent$pos_neg))
+
+plot_ukraine_sent <- ggplot(ukraine_sent, aes(x=date, y=pos_neg))+
+  geom_point(size=2, alpha=0.2)+
+  labs(title = "Sentiment Analysis Ukraine war", y="Positivity Score")
+plot_ukraine_sent
+
+ukraine_by_year <- ukraine_sent$pos_neg %>% 
+  aggregate(by=list(ukraine_sent$year), FUN = mean) %>% rename(year = Group.1,
+                                                       pos_neg = x)
+# ukraine_by_year
+
+plot_ukraine_pos_by_year <- ggplot(ukraine_by_year, aes(x=year, y=pos_neg))+
+  geom_line(color="royalblue", size=1)+
+  theme_light()+
+  ylim(0.35, 0.5)+
+  labs(title = "Sentiment Analysis Ukraine war by year", y="Positivity Score")
+plot_ukraine_pos_by_year
+
+
+```
+
+#### Word Frequency
+
+```{r echo=FALSE}
+load("Data/ukraine_toks.RData")
+
+
+# create list with the most common words in english to remove them from the tokens
+common_words <- read.delim("Data/1-1000.txt", header = FALSE) %>%
+  head(200) %>% 
+  as.vector()
+common_words <- common_words$V1
+
+ukraine_toks_wordcount <- ukraine_toks %>% 
+  tokens_remove(common_words) 
+
+ukraine_dfm <- dfm(ukraine_toks_wordcount)
+
+
+
+ukraine_topwords <- topfeatures(ukraine_dfm, 50) %>%
+  data.frame(word=names(.),
+             frequency =.,
+             row.names = c())
+
+ukraine_topwords
+
+save(ukraine_dfm, file = "Data/ukraine_dfm.RData")
+```
+
+#### Policy agendas analysis
+
+```{r echo=FALSE, warning=FALSE}
+load("Data/ukraine_toks.RData")
+load("Data/ukraine.RData")
+
+policyagendas <- dictionary(file = "Data/policy_agendas_english.lcd")
+
+ukraine_toks_pol <- tokens_lookup(ukraine_toks, dictionary = policyagendas)
+ukraine_pol <- dfm(ukraine_toks_pol) %>% 
+  convert(to = "data.frame") %>%
+  select(-doc_id)
+
+ukraine_pol <- ukraine_pol / rowSums(ukraine_pol)
+
+ukraine_pol$year <- ukraine$year
+
+ukraine_pol <- drop_na(ukraine_pol)
+
+ukraine_pol_by_year <- ukraine_pol %>% 
+  group_by(year) %>%
+  summarise_each(funs = sum)
+  
+
+ukraine_pol_by_year_plot1 <- ukraine_pol_by_year %>%
+  pivot_longer(cols = 2:29, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy agendas in 'Ukraine War' articles in The Guardian",
+       caption = "Dictionary for classification: Lexicoder policy agendas")
+ukraine_pol_by_year_plot1
+
+ukraine_pol_by_year_plot_select <- ukraine_pol_by_year %>%
+  select(year, defence, energy, foreign_trade, intl_affairs, religion, crime) %>%
+  pivot_longer(cols = 2:7, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Ukraine War' articles in The Guardian",
+       subtitle = "SELECTION", caption = "Dictionary for classification: Lexicoder policy agendas")
+ukraine_pol_by_year_plot_select
+
+# ukraine_pol_by_year
+
+save(ukraine_pol, file = "Data/ukraine_pol.RData")
+
+```
+
+## New York Times
+
+URL generator for the New York Times API
+```{r}
+nyt_key = read_lines("nyt_key.txt")
+
+nyt_url <- function(search_word, date_from='', date_to='') {
+  search_word <- str_replace(search_word, ' ', '%20')
+  
+  if (date_from == '' | date_to == '') {
+    url <- paste0('http://api.nytimes.com/svc/search/v2/articlesearch.json?q=', search_word,
+                  '&api-key=', nyt_key, sep='')
+  } else {
+    url <- paste0('http://api.nytimes.com/svc/search/v2/articlesearch.json?q=', search_word,
+                  '&begin_date=', date_from, '&end_date=', date_to,
+                  '&api-key=', nyt_key, sep='')
+  }
+  url
+  
+}
+```
+
+### Afghanistan War
+
+#### Get Data
+
+```{r eval = FALSE}
+nyt_afgh_list <- vector("list")
+
+counter <- 1
+
+# in the NYT API it is only possible to search until page 200
+
+for (year in 1999:2022) {
+  Sys.sleep(6)
+  base_url <- nyt_url('afghanistan war', paste0(year, '-01-01'), 
+                           paste0(year, '-12-31'))
+  print(base_url)
+  n_results <- fromJSON(base_url) %>% .$response %>% .$meta %>% .$hits
+  max_pages <-  ceiling(((n_results / 10)-1))
+  
+  if (max_pages > 200) {
+    max_pages <- 200
+  } else {}
+  
+  print(year)
+  
+  for(i in 1:(max_pages/10)){
+      tryCatch({
+      print(i)
+      url <- paste0(base_url, "&page=", i, sep='')
+        NYTSearch <- fromJSON(url, flatten = TRUE) %>%
+          data.frame(.,stringsAsFactors = FALSE) 
+      nyt_afgh_list[[counter]] <- NYTSearch
+      counter <- counter + 1
+      Sys.sleep(6)
+      }, error=function(e){
+        message(paste0("Error at ", year, " Page:", i))
+      })
+  }
+  
+}
+
+nyt_afgh_results <- rbind_pages(nyt_afgh_list)
+
+save(nyt_afgh_results, file = "Data/nyt_afgh_results.RData")
+
+```
+
+#### Data Cleaning
+
+```{r eval = FALSE}
+load("Data/nyt_afgh_results.RData")
+
+glimpse(nyt_afgh_results)
+
+# basic data cleaning and selection of important variables
+
+nyt_afgh <- nyt_afgh_results %>%
+  filter(response.docs.type_of_material == "News")%>%
+  select(abstract = response.docs.abstract, 
+         date = response.docs.pub_date, 
+         keywords = response.docs.keywords, 
+         url = response.docs.web_url, 
+         word_count = response.docs.word_count, 
+         headline = response.docs.headline.main, 
+         id = response.docs._id,
+         hits_year = response.meta.hits )
+
+summary(nyt_afgh$word_count)
+
+nyt_afgh <- nyt_afgh %>% 
+  filter(word_count >=50)
+
+nyt_afgh$date <- nyt_afgh$date %>%
+  gsub("T.*",
+       "", .) %>%
+  as.Date
+
+nyt_afgh$year <- nyt_afgh$date %>%
+  gsub("([0-9]{4}).*",
+       "\\1", .) %>% as.numeric
+
+glimpse(nyt_afgh)
+
+save(nyt_afgh, file = "Data/nyt_afgh.RData")
+```
+
+#### Get Full articles
+
+```{r eval = FALSE}
+load("Data/nyt_afgh.RData")
+
+# the NYT API does not automatically include the article text. That's why I had to write a script to automatically collect the full text
+
+# Some sites are no longer available
+# That's why I need to remove the article at position 978
+
+nyt_afgh <- nyt_afgh[-c(978),]
+
+article_text <- vector("list")
+count <- 1
+error_tries <- 0
+
+
+while(count <= length(nyt_afgh$url)) {
+  tryCatch({
+  url = nyt_afgh$url[count]
+  raw <- read_html(url)
+  text <- html_nodes(raw, "section p") %>% html_text() %>% paste(., collapse=" ")
+  article_text[[count]] <- text
+  print(count)
+  count <- count + 1
+  }, error=function(e){
+        message(paste0("Error at ", count))
+        if (error_tries == 0) {
+          error_tries <- error_tries + 1
+          Sys.sleep(30)
+        } else {
+          article_text[[count]] <- NA
+          error_tries <- 0
+          count <- count + 1
+        }
+      })
+}
+
+
+
+
+nyt_afgh$text <- article_text %>% as.character
+
+glimpse(nyt_afgh)
+head(nyt_afgh)
+
+nyt_afgh <- nyt_afgh %>% filter(!is.na(nyt_afgh$text))
+
+save(nyt_afgh, file = "Data/nyt_afgh.RData")
+
+```
+
+#### Basic Analysis
+
+```{r}
+load("Data/nyt_afgh.RData")
+
+# Create a histogram to show the distribution of articles
+
+nyt_afgh_hist <- ggplot(nyt_afgh, aes(x=date))+
+  geom_histogram(fill="lightblue", color="black", binwidth = 200)
+# nyt_afgh_hist
+
+
+nyt_afgh_hist_year <- nyt_afgh[!duplicated(nyt_afgh[ , c("hits_year")]), ] %>%
+  select(hits_year, year) %>%
+  ggplot(aes(x=year, y=hits_year))+
+  geom_bar(stat='identity', fill = "lightblue", color="black")+
+  labs(title = "Distribution of articles per year", y="Number of articles per year")
+nyt_afgh_hist_year
+```
+
+#### Create a corpus and tokens
+
+```{r warning=FALSE, results='hide'}
+load("Data/nyt_afgh.RData")
+
+nyt_afgh_corpus <- corpus(nyt_afgh,
+                      text_field = "text")
+
+summary(nyt_afgh_corpus) %>% head
+docvars(nyt_afgh_corpus) %>% 
+  head
+
+nyt_afgh_corpus[1]
+
+
+nyt_afgh_toks <- tokens(nyt_afgh_corpus,
+                    what = c("word"),
+                    remove_separators = TRUE, 
+                    include_docvars = TRUE,
+                    ngrams = 1L,
+                    remove_numbers = FALSE, 
+                    remove_punct = TRUE,
+                    remove_symbols = FALSE, 
+                    remove_hyphens = FALSE)
+
+# nyt_afgh_toks %>% head
+
+nyt_afgh_toks <- nyt_afgh_toks %>% 
+  tokens_tolower %>%
+  tokens_remove(stopwords("english"), padding = TRUE) %>%
+  tokens_remove("") %>%
+  tokens_wordstem(language = "english")
+
+save(nyt_afgh_toks, file = "Data/nyt_afgh_toks.RData")
+
+```
+
+#### Sentiment Analysis
+
+```{r}
+load("Data/nyt_afgh_toks.RData")
+load("Data/nyt_afgh.RData")
+
+# make a sentiment analysis on the ratio of positive to negative words in each article
+
+nyt_afgh_toks_sent <- tokens_lookup(nyt_afgh_toks,
+                                dictionary =  data_dictionary_LSD2015[1:2])
+# nyt_afgh_toks_sent %>% head
+
+nyt_afgh_dfm_sent <- dfm(nyt_afgh_toks_sent)
+# nyt_afgh_dfm_sent %>% head
+
+nyt_afgh_pos_neg <- nyt_afgh_dfm_sent %>% convert(.,to = "data.frame") %>% 
+  mutate(pos_to_neg = positive / (positive + negative))
+
+# summary(nyt_afgh_pos_neg)
+#nyt_afgh_pos_neg %>% filter(is.na(nyt_afgh_pos_neg$pos_to_neg))
+# 1 NA in year 2002
+# Row has 0 negative and 0 positive -> NaN -> discard
+
+nyt_afgh_sent <- nyt_afgh
+
+nyt_afgh_sent$pos_neg <- nyt_afgh_pos_neg$pos_to_neg
+nyt_afgh_sent <- nyt_afgh_sent %>% filter(!is.na(nyt_afgh_sent$pos_neg))
+
+plot_nyt_afgh_sent <- ggplot(nyt_afgh_sent, aes(x=date, y=pos_neg))+
+  geom_point(size=2, alpha=0.2)+
+  labs(title = "Sentiment Analysis Afghanistan war", y="Positivity Score")
+plot_nyt_afgh_sent
+
+nyt_afgh_by_year <- nyt_afgh_sent$pos_neg %>% 
+  aggregate(by=list(nyt_afgh_sent$year), FUN = mean) %>% rename(year = Group.1,
+                                                                pos_neg = x)
+# nyt_afgh_by_year
+
+plot_nyt_afgh_pos_by_year <- ggplot(nyt_afgh_by_year, aes(x=year, y=pos_neg))+
+  geom_line(color="royalblue", size=1, aes(group=1))+
+  theme_light()+
+  ylim(0.3, 0.5)+
+  labs(title = "Sentiment Analysis Afghanistan war by year", y="Positivity Score")
+plot_nyt_afgh_pos_by_year
+
+```
+
+#### Word Frequency
+
+```{r}
+load("Data/nyt_afgh_toks.RData")
+
+
+# load list with the most common words in English to remove them from the tokens
+
+common_words <- read.delim("Data/1-1000.txt", header = FALSE) %>%
+  head(200) %>% 
+  as.vector()
+common_words <- common_words$V1
+
+# removing the top 200 words from the tokens
+nyt_afgh_toks_wordcount <- nyt_afgh_toks %>% 
+  tokens_remove(common_words) 
+
+nyt_afgh_dfm <- dfm(nyt_afgh_toks_wordcount)
+
+
+
+nyt_afgh_topwords <- topfeatures(nyt_afgh_dfm, 50) %>%
+  data.frame(word=names(.),
+             frequency =.,
+             row.names = c())
+
+nyt_afgh_topwords
+
+save(nyt_afgh_dfm, file = "Data/nyt_afgh_dfm.RData")
+
+```
+
+#### Policy agendas analysis
+
+```{r, warning=FALSE}
+load("Data/nyt_afgh_toks.RData")
+load("Data/nyt_afgh.RData")
+
+# Load the Lexicoder policy agendas
+policyagendas <- dictionary(file = "Data/policy_agendas_english.lcd")
+
+# lookup the policy agendas dictionary and give each article a score
+nyt_afgh_toks_pol <- tokens_lookup(nyt_afgh_toks, dictionary = policyagendas)
+nyt_afgh_pol <- dfm(nyt_afgh_toks_pol) %>% 
+  convert(to = "data.frame") %>%
+  select(-doc_id)
+
+# divide the values for each row through the sum of each row to get relative values for the agendas for each article
+nyt_afgh_pol <- nyt_afgh_pol / rowSums(nyt_afgh_pol)
+
+nyt_afgh_pol$year <- nyt_afgh$year
+
+nyt_afgh_pol <- drop_na(nyt_afgh_pol)
+
+nyt_afgh_pol_by_year <- nyt_afgh_pol %>% 
+  group_by(year) %>%
+  summarise_each(funs = sum)
+  
+# Plot the results to better inspect them
+nyt_afgh_pol_by_year_plot1 <- nyt_afgh_pol_by_year %>%
+  pivot_longer(cols = 2:29, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Afghanistan War' articles in The NYT",
+       caption = "Dictionary for classification: Lexicoder policy agendas")
+nyt_afgh_pol_by_year_plot1
+
+# select some agendas which seam important
+nyt_afgh_pol_by_year_plot_select <- nyt_afgh_pol_by_year %>%
+  select(year, defence, energy, foreign_trade, intl_affairs, religion, crime) %>%
+  pivot_longer(cols = 2:7, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Afghanistan War' articles in The NYT",
+       subtitle = "SELECTION", caption = "Dictionary for classification: Lexicoder policy agendas")
+nyt_afgh_pol_by_year_plot_select
+
+# nyt_afgh_pol_by_year
+
+save(nyt_afgh_pol, file = "Data/nyt_afgh_pol.RData")
+
+
+```
+
+The code for the other wars are not included in the rendered markdown since they are almost identical to the coverage of the Afghanistan War
+
+### Syria War
+
+```{r eval=FALSE, include=FALSE}
+nyt_syria_list <- vector("list")
+
+counter <- 1
+
+# in the NYT API it is only possible to search until page 200
+
+for (year in 2011:2022) {
+  Sys.sleep(6)
+  base_url <- nyt_url('syria war', paste0(year, '-01-01'), 
+                           paste0(year, '-12-31'))
+  print(base_url)
+  n_results <- fromJSON(base_url) %>% .$response %>% .$meta %>% .$hits
+  max_pages <-  ceiling(((n_results / 10)-1))
+  
+  if (max_pages > 200) {
+    max_pages <- 200
+  } else {}
+  
+  print(year)
+  
+  for(i in 1:(max_pages/5)){
+      tryCatch({
+      print(i)
+      url <- paste0(base_url, "&page=", i, sep='')
+        NYTSearch <- fromJSON(url, flatten = TRUE) %>%
+          data.frame(.,stringsAsFactors = FALSE) 
+      nyt_syria_list[[counter]] <- NYTSearch
+      counter <- counter + 1
+      Sys.sleep(6)
+      }, error=function(e){
+        message(paste0("Error at ", year, " Page:", i))
+      })
+  }
+  
+}
+
+nyt_syria_results <- rbind_pages(nyt_syria_list)
+
+save(nyt_syria_results, file = "Data/nyt_syria_results.RData")
+
+```
+
+```{r eval = FALSE, include=FALSE}
+load("Data/nyt_syria_results.RData")
+
+glimpse(nyt_syria_results)
+
+nyt_syria <- nyt_syria_results %>%
+  filter(response.docs.type_of_material == "News")%>%
+  select(abstract = response.docs.abstract, 
+         date = response.docs.pub_date, 
+         keywords = response.docs.keywords, 
+         url = response.docs.web_url, 
+         word_count = response.docs.word_count, 
+         headline = response.docs.headline.main, 
+         id = response.docs._id,
+         hits_year = response.meta.hits )
+
+summary(nyt_syria$word_count)
+
+nyt_syria <- nyt_syria %>% 
+  filter(word_count >=50)
+
+nyt_syria$date <- nyt_syria$date %>%
+  gsub("T.*",
+       "", .) %>%
+  as.Date
+
+nyt_syria$year <- nyt_syria$date %>%
+  gsub("([0-9]{4}).*",
+       "\\1", .) %>% as.numeric
+
+glimpse(nyt_syria)
+
+save(nyt_syria, file = "Data/nyt_syria.RData")
+```
+
+```{r eval = FALSE, include=FALSE}
+# Some sites are no longer available
+# That's why I implemented the 
+
+article_text <- vector("list")
+count <- 1
+error_tries <- 0
+
+
+while(count <= length(nyt_syria$url)) {
+  tryCatch({
+  url = nyt_syria$url[count]
+  raw <- read_html(url)
+  text <- html_nodes(raw, "section p") %>% html_text() %>% paste(., collapse=" ")
+  article_text[[count]] <- text
+  print(count)
+  count <- count + 1
+  }, error=function(e){
+        message(paste0("Error at ", count))
+        if (error_tries == 0) {
+          error_tries <- error_tries + 1
+          Sys.sleep(60)
+        } else {
+          article_text[[count]] <- NA
+          error_tries <- 0
+          count <- count + 1
+        }
+      })
+}
+
+
+
+
+nyt_syria$text <- article_text %>% as.character
+
+glimpse(nyt_syria)
+head(nyt_syria)
+
+nyt_syria <- nyt_syria %>% filter(!is.na(nyt_syria$text))
+
+save(nyt_syria, file = "Data/nyt_syria.RData")
+
+```
+
+#### Basic Analysis
+
+```{r echo=FALSE}
+load("Data/nyt_syria.RData")
+
+nyt_syria_hist <- ggplot(nyt_syria, aes(x=date))+
+  geom_histogram(fill="lightblue", color="black", binwidth = 200)
+# nyt_syria_hist
+
+
+nyt_syria_hist_year <- nyt_syria[!duplicated(nyt_syria[ , c("hits_year")]), ] %>%
+  select(hits_year, year) %>%
+  ggplot(aes(x=year, y=hits_year))+
+  geom_bar(stat='identity', fill = "lightblue", color="black")+
+  labs(title = "Distribution of articles per year", y="Number of articles per year")
+nyt_syria_hist_year
+```
+
+```{r include=FALSE}
+load("Data/nyt_syria.RData")
+
+nyt_syria_corpus <- corpus(nyt_syria,
+                      text_field = "text")
+
+summary(nyt_syria_corpus) %>% head
+docvars(nyt_syria_corpus) %>% 
+  head
+
+nyt_syria_corpus[1]
+
+
+nyt_syria_toks <- tokens(nyt_syria_corpus,
+                    what = c("word"),
+                    remove_separators = TRUE, 
+                    include_docvars = TRUE,
+                    ngrams = 1L,
+                    remove_numbers = FALSE, 
+                    remove_punct = TRUE,
+                    remove_symbols = FALSE, 
+                    remove_hyphens = FALSE)
+
+nyt_syria_toks %>% head
+
+nyt_syria_toks <- nyt_syria_toks %>% 
+  tokens_tolower %>%
+  tokens_remove(stopwords("english"), padding = TRUE) %>%
+  tokens_remove("") %>%
+  tokens_wordstem(language = "english")
+
+save(nyt_syria_toks, file = "Data/nyt_syria_toks.RData")
+
+```
+
+#### Sentiment Analysis
+
+```{r echo=FALSE}
+load("Data/nyt_syria_toks.RData")
+load("Data/nyt_syria.RData")
+
+nyt_syria_toks_sent <- tokens_lookup(nyt_syria_toks,
+                                dictionary =  data_dictionary_LSD2015[1:2])
+# nyt_syria_toks_sent %>% head
+
+nyt_syria_dfm_sent <- dfm(nyt_syria_toks_sent)
+# nyt_syria_dfm_sent %>% head
+
+nyt_syria_pos_neg <- nyt_syria_dfm_sent %>% convert(.,to = "data.frame") %>% 
+  mutate(pos_to_neg = positive / (positive + negative))
+
+# summary(nyt_syria_pos_neg)
+#nyt_syria_pos_neg %>% filter(is.na(nyt_syria_pos_neg$pos_to_neg))
+# 1 NA in year 2002
+# Row has 0 negative and 0 positive -> NaN -> discard
+
+nyt_syria_sent <- nyt_syria
+
+nyt_syria_sent$pos_neg <- nyt_syria_pos_neg$pos_to_neg
+nyt_syria_sent <- nyt_syria_sent %>% filter(!is.na(nyt_syria_sent$pos_neg))
+
+plot_nyt_syria_sent <- ggplot(nyt_syria_sent, aes(x=date, y=pos_neg))+
+  geom_point(size=2, alpha=0.2)+
+  labs(title = "Sentiment Analysis Syria war", y="Positivity Score")
+plot_nyt_syria_sent
+
+nyt_syria_by_year <- nyt_syria_sent$pos_neg %>% 
+  aggregate(by=list(nyt_syria_sent$year), FUN = mean) %>% rename(year = Group.1,
+                                                                pos_neg = x)
+# nyt_syria_by_year
+
+plot_nyt_syria_pos_by_year <- ggplot(nyt_syria_by_year, aes(x=year, y=pos_neg))+
+  geom_line(color="royalblue", size=1, aes(group=1))+
+  theme_light()+
+  ylim(0.3, 0.5)+
+  labs(title = "Sentiment Analysis Syria war by year", y="Positivity Score")
+plot_nyt_syria_pos_by_year
+
+```
+
+#### Word Frequency
+
+```{r echo=FALSE}
+load("Data/nyt_syria_toks.RData")
+
+
+# create list with the most common words in english to remove them from the tokens
+common_words <- read.delim("Data/1-1000.txt", header = FALSE) %>%
+  head(200) %>% 
+  as.vector()
+common_words <- common_words$V1
+
+nyt_syria_toks_wordcount <- nyt_syria_toks %>% 
+  tokens_remove(common_words) 
+
+nyt_syria_dfm <- dfm(nyt_syria_toks_wordcount)
+
+
+
+nyt_syria_topwords <- topfeatures(nyt_syria_dfm, 50) %>%
+  data.frame(word=names(.),
+             frequency =.,
+             row.names = c())
+
+nyt_syria_topwords
+save(nyt_syria_dfm, file = "Data/nyt_syria_dfm.RData")
+```
+
+#### Policy agendas analysis
+
+```{r echo=FALSE, warning=FALSE}
+load("Data/nyt_syria_toks.RData")
+load("Data/nyt_syria.RData")
+
+policyagendas <- dictionary(file = "Data/policy_agendas_english.lcd")
+
+nyt_syria_toks_pol <- tokens_lookup(nyt_syria_toks, dictionary = policyagendas)
+nyt_syria_pol <- dfm(nyt_syria_toks_pol) %>% 
+  convert(to = "data.frame") %>%
+  select(-doc_id)
+
+nyt_syria_pol <- nyt_syria_pol / rowSums(nyt_syria_pol)
+
+nyt_syria_pol$year <- nyt_syria$year
+
+nyt_syria_pol <- drop_na(nyt_syria_pol)
+
+nyt_syria_pol_by_year <- nyt_syria_pol %>% 
+  group_by(year) %>%
+  summarise_each(funs = sum)
+  
+
+nyt_syria_pol_by_year_plot1 <- nyt_syria_pol_by_year %>%
+  pivot_longer(cols = 2:29, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Syria war' articles in The NYT",
+       caption = "Dictionary for classification: Lexicoder policy agendas")
+nyt_syria_pol_by_year_plot1
+
+nyt_syria_pol_by_year_plot_select <- nyt_syria_pol_by_year %>%
+  select(year, defence, energy, foreign_trade, intl_affairs, religion, crime) %>%
+  pivot_longer(cols = 2:7, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Syria war' articles in The NYT",
+       subtitle = "SELECTION", caption = "Dictionary for classification: Lexicoder policy agendas")
+nyt_syria_pol_by_year_plot_select
+
+
+save(nyt_syria_pol, file = "Data/nyt_syria_pol.RData")
+
+```
+
+### Ukraine War
+
+```{r eval = FALSE, include=FALSE}
+nyt_ukraine_list <- vector("list")
+
+counter <- 1
+
+# in the NYT API it is only possible to search until page 200
+
+for (year in 2014:2022) {
+  Sys.sleep(6)
+  base_url <- nyt_url('ukraine war', paste0(year, '-01-01'), 
+                           paste0(year, '-12-31'))
+  print(base_url)
+  n_results <- fromJSON(base_url) %>% .$response %>% .$meta %>% .$hits
+  max_pages <-  ceiling(((n_results / 10)-1))
+  
+  if (max_pages > 200) {
+    max_pages <- 200
+  } else {}
+  
+  print(year)
+  
+  for(i in 1:(max_pages/3)){
+      tryCatch({
+      print(i)
+      url <- paste0(base_url, "&page=", i, sep='')
+        NYTSearch <- fromJSON(url, flatten = TRUE) %>%
+          data.frame(.,stringsAsFactors = FALSE) 
+      nyt_ukraine_list[[counter]] <- NYTSearch
+      counter <- counter + 1
+      Sys.sleep(6)
+      }, error=function(e){
+        message(paste0("Error at ", year, " Page:", i))
+      })
+  }
+  
+}
+
+nyt_ukraine_results <- rbind_pages(nyt_ukraine_list)
+
+save(nyt_ukraine_results, file = "Data/nyt_ukraine_results.RData")
+
+```
+
+```{r eval = FALSE, include=FALSE}
+load("Data/nyt_ukraine_results.RData")
+
+glimpse(nyt_ukraine_results)
+
+nyt_ukraine <- nyt_ukraine_results %>%
+  filter(response.docs.type_of_material == "News")%>%
+  select(abstract = response.docs.abstract, 
+         date = response.docs.pub_date, 
+         keywords = response.docs.keywords, 
+         url = response.docs.web_url, 
+         word_count = response.docs.word_count, 
+         headline = response.docs.headline.main, 
+         id = response.docs._id,
+         hits_year = response.meta.hits )
+
+summary(nyt_ukraine$word_count)
+
+nyt_ukraine <- nyt_ukraine %>% 
+  filter(word_count >=50)
+
+nyt_ukraine$date <- nyt_ukraine$date %>%
+  gsub("T.*",
+       "", .) %>%
+  as.Date
+
+nyt_ukraine$year <- nyt_ukraine$date %>%
+  gsub("([0-9]{4}).*",
+       "\\1", .) %>% as.numeric
+
+glimpse(nyt_ukraine)
+
+save(nyt_ukraine, file = "Data/nyt_ukraine.RData")
+```
+
+```{r eval = FALSE, include=FALSE}
+# Some sites are no longer available
+# That's why I implemented the tryCatcch function
+
+article_text <- vector("list")
+count <- 1
+error_tries <- 0
+
+
+while(count <= length(nyt_ukraine$url)) {
+  tryCatch({
+  url = nyt_ukraine$url[count]
+  raw <- read_html(url)
+  text <- html_nodes(raw, "section p") %>% html_text() %>% paste(., collapse=" ")
+  article_text[[count]] <- text
+  print(count)
+  count <- count + 1
+  }, error=function(e){
+        message(paste0("Error at ", count))
+        if (error_tries == 0) {
+          error_tries <- error_tries + 1
+          Sys.sleep(60)
+        } else {
+          article_text[[count]] <- NA
+          error_tries <- 0
+          count <- count + 1
+        }
+      })
+}
+
+
+
+
+nyt_ukraine$text <- article_text %>% as.character
+
+glimpse(nyt_ukraine)
+head(nyt_ukraine)
+
+nyt_ukraine <- nyt_ukraine %>% filter(!is.na(nyt_ukraine$text))
+
+save(nyt_ukraine, file = "Data/nyt_ukraine.RData")
+
+```
+
+#### Basic Analysis
+
+```{r echo=FALSE}
+load("Data/nyt_ukraine.RData")
+
+nyt_ukraine_hist <- ggplot(nyt_ukraine, aes(x=date))+
+  geom_histogram(fill="lightblue", color="black", binwidth = 200)
+# nyt_ukraine_hist
+
+
+nyt_ukraine_hist_year <- nyt_ukraine[!duplicated(nyt_ukraine[ , c("hits_year")]), ] %>%
+  select(hits_year, year) %>%
+  ggplot(aes(x=year, y=hits_year))+
+  geom_bar(stat='identity', fill = "lightblue", color="black")+
+  labs(title = "Distribution of articles per year", y="Number of articles per year")
+nyt_ukraine_hist_year
+```
+
+```{r include=FALSE}
+load("Data/nyt_ukraine.RData")
+
+nyt_ukraine_corpus <- corpus(nyt_ukraine,
+                      text_field = "text")
+
+summary(nyt_ukraine_corpus) %>% head
+docvars(nyt_ukraine_corpus) %>% 
+  head
+
+nyt_ukraine_corpus[1]
+
+
+nyt_ukraine_toks <- tokens(nyt_ukraine_corpus,
+                    what = c("word"),
+                    remove_separators = TRUE, 
+                    include_docvars = TRUE,
+                    ngrams = 1L,
+                    remove_numbers = FALSE, 
+                    remove_punct = TRUE,
+                    remove_symbols = FALSE, 
+                    remove_hyphens = FALSE)
+
+nyt_ukraine_toks %>% head
+
+nyt_ukraine_toks <- nyt_ukraine_toks %>% 
+  tokens_tolower %>%
+  tokens_remove(stopwords("english"), padding = TRUE) %>%
+  tokens_remove("") %>%
+  tokens_wordstem(language = "english")
+
+save(nyt_ukraine_toks, file = "Data/nyt_ukraine_toks.RData")
+
+```
+
+#### Sentiment Analysis
+
+```{r echo=FALSE}
+load("Data/nyt_ukraine_toks.RData")
+load("Data/nyt_ukraine.RData")
+
+nyt_ukraine_toks_sent <- tokens_lookup(nyt_ukraine_toks,
+                                dictionary =  data_dictionary_LSD2015[1:2])
+# nyt_ukraine_toks_sent %>% head
+
+nyt_ukraine_dfm_sent <- dfm(nyt_ukraine_toks_sent)
+# nyt_ukraine_dfm_sent %>% head
+
+nyt_ukraine_pos_neg <- nyt_ukraine_dfm_sent %>% convert(.,to = "data.frame") %>% 
+  mutate(pos_to_neg = positive / (positive + negative))
+
+# summary(nyt_ukraine_pos_neg)
+#nyt_ukraine_pos_neg %>% filter(is.na(nyt_ukraine_pos_neg$pos_to_neg))
+# 1 NA in year 2002
+# Row has 0 negative and 0 positive -> NaN -> discard
+
+nyt_ukraine_sent <- nyt_ukraine
+
+nyt_ukraine_sent$pos_neg <- nyt_ukraine_pos_neg$pos_to_neg
+nyt_ukraine_sent <- nyt_ukraine_sent %>% filter(!is.na(nyt_ukraine_sent$pos_neg))
+
+plot_nyt_ukraine_sent <- ggplot(nyt_ukraine_sent, aes(x=date, y=pos_neg))+
+  geom_point(size=2, alpha=0.2)+
+  labs(title = "Sentiment Analysis Ukraine war", y="Positivity Score")
+plot_nyt_ukraine_sent
+
+nyt_ukraine_by_year <- nyt_ukraine_sent$pos_neg %>% 
+  aggregate(by=list(nyt_ukraine_sent$year), FUN = mean) %>% rename(year = Group.1,
+                                                                pos_neg = x)
+# nyt_ukraine_by_year
+
+plot_nyt_ukraine_pos_by_year <- ggplot(nyt_ukraine_by_year, aes(x=year, y=pos_neg))+
+  geom_line(color="royalblue", size=1, aes(group=1))+
+  theme_light()+
+  ylim(0.3, 0.5)+
+  labs(title = "Sentiment Analysis Ukraine war", y="Positivity Score")
+plot_nyt_ukraine_pos_by_year
+
+```
+
+#### Word Frequency
+
+```{r echo=FALSE}
+load("Data/nyt_ukraine_toks.RData")
+
+
+# create list with the most common words in english to remove them from the tokens
+common_words <- read.delim("Data/1-1000.txt", header = FALSE) %>%
+  head(200) %>% 
+  as.vector()
+common_words <- common_words$V1
+
+nyt_ukraine_toks_wordcount <- nyt_ukraine_toks %>% 
+  tokens_remove(common_words) 
+
+nyt_ukraine_dfm <- dfm(nyt_ukraine_toks_wordcount)
+
+
+
+nyt_ukraine_topwords <- topfeatures(nyt_ukraine_dfm, 50) %>%
+  data.frame(word=names(.),
+             frequency =.,
+             row.names = c())
+
+nyt_ukraine_topwords
+save(nyt_ukraine_dfm, file = "Data/nyt_ukraine_dfm.RData")
+
+```
+
+#### Policy agendas analysis
+
+```{r echo=FALSE, warning=FALSE}
+load("Data/nyt_ukraine_toks.RData")
+load("Data/nyt_ukraine.RData")
+
+policyagendas <- dictionary(file = "Data/policy_agendas_english.lcd")
+
+nyt_ukraine_toks_pol <- tokens_lookup(nyt_ukraine_toks, dictionary = policyagendas)
+nyt_ukraine_pol <- dfm(nyt_ukraine_toks_pol) %>% 
+  convert(to = "data.frame") %>%
+  select(-doc_id)
+
+nyt_ukraine_pol <- nyt_ukraine_pol / rowSums(nyt_ukraine_pol)
+
+nyt_ukraine_pol$year <- nyt_ukraine$year
+
+nyt_ukraine_pol <- drop_na(nyt_ukraine_pol)
+
+nyt_ukraine_pol_by_year <- nyt_ukraine_pol %>% 
+  group_by(year) %>%
+  summarise_each(funs = sum)
+  
+
+nyt_ukraine_pol_by_year_plot1 <- nyt_ukraine_pol_by_year %>%
+  pivot_longer(cols = 2:29, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Ukraine war' articles in The NYT",
+       caption = "Dictionary for classification: Lexicoder policy agendas")
+nyt_ukraine_pol_by_year_plot1
+
+nyt_ukraine_pol_by_year_plot_select <- nyt_ukraine_pol_by_year %>%
+  select(year, defence, energy, foreign_trade, intl_affairs, religion, crime) %>%
+  pivot_longer(cols = 2:7, names_to = "Agenda") %>%
+  ggplot(aes(x=year, y=value, colour = Agenda, fill = Agenda))+
+  geom_bar(position="fill", stat="identity")+
+  labs(x="Year", y="Value", title="Distribution of policy Agendas in 'Ukraine war' articles in The NYT",
+       subtitle = "SELECTION", caption = "Dictionary for classification: Lexicoder policy agendas")
+nyt_ukraine_pol_by_year_plot_select
+
+# nyt_ukraine_pol_by_year
+
+save(nyt_ukraine_pol, file = "Data/nyt_ukraine_pol.RData")
+
+```
+
+# Comparison
+
+## Distribution
+
+```{r, warning=FALSE}
+afgh_year_total <- afgh[!duplicated(afgh[ , c("year")]), ] %>%
+  select(total_year, year)
+
+syria_year_total <- syria[!duplicated(syria[ , c("year")]), ] %>%
+  select(total_year, year)
+
+ukraine_year_total <- ukraine[!duplicated(ukraine[ , c("year")]), ] %>%
+  select(total_year, year)
+
+nyt_afgh_year_total <- nyt_afgh[!duplicated(nyt_afgh[ , c("year")]), ] %>%
+  select(hits_year, year)
+
+nyt_syria_year_total <- nyt_syria[!duplicated(nyt_syria[ , c("year")]), ] %>%
+  select(hits_year, year)
+
+nyt_ukraine_year_total <- nyt_ukraine[!duplicated(nyt_ukraine[ , c("year")]), ] %>%
+  select(hits_year, year)
+
+afgh_dist_plot <- ggplot()+
+  geom_line(afgh_year_total, 
+            mapping = aes(x=year, y=total_year, 
+                          color="The Guardian"), size=1)+
+  geom_line(nyt_afgh_year_total, 
+            mapping = aes(x=year, y=hits_year, 
+                          color="The New York Times"), size=1)+
+  scale_color_manual("", 
+                     values = c("The Guardian"="royalblue", 
+                                "The New York Times"="firebrick"))+
+  labs(title="Aghanistan War", x="Year", y="Number of articles")
+afgh_dist_plot
+
+syria_dist_plot <- ggplot()+
+  geom_line(syria_year_total, 
+            mapping = aes(x=year, y=total_year, 
+                          color="The Guardian"), size=1)+
+  geom_line(nyt_syria_year_total, 
+            mapping = aes(x=year, y=hits_year, 
+                          color="The New York Times"), size=1)+
+  scale_color_manual("", 
+                     values = c("The Guardian"="royalblue", 
+                                "The New York Times"="firebrick"))+
+  labs(title="Syria War", x="Year", y="Number of articles")
+syria_dist_plot
+
+ukraine_dist_plot <- ggplot()+
+  geom_line(ukraine_year_total, 
+            mapping = aes(x=year, y=total_year, 
+                          color="The Guardian"), size=1)+
+  geom_line(nyt_ukraine_year_total, 
+            mapping = aes(x=year, y=hits_year, 
+                          color="The New York Times"), size=1)+
+  scale_color_manual("", 
+                     values = c("The Guardian"="royalblue", 
+                                "The New York Times"="firebrick"))+
+  labs(title="Ukraine War", x="Year", y="Number of articles")
+ukraine_dist_plot
+
+```
+
+By looking at the distribution of the articles the first noticeable difference between the two newspaper is that the Guardian published more articles almost in every year about every war.
+But the distance between the two newspaper varies a lot.
+When comparing the war in Afghanistan and the war in Ukraine it is clearly visible that the difference in the number of published articles is a lot smaller in the Afghanistan war and a lot larger in the Ukraine war.
+This makes sense since the origin country of the New York Times was involved in the war and the origin country of the Guardian is geographically and politically much closer to the Ukraine.
+Another noticeable difference is that the number of articles published for the war in Syria peaks again in 2022 in the Guardian but there's no sign of that in the New York Times.
+
+## Sentiment Analysis
+
+```{r}
+sent_comparison <- data.frame(matrix(nrow = 6, ncol = 3))
+colnames(sent_comparison) <- c("Newspaper", "War", "Pos")
+sent_comparison$Newspaper <- c("Guardian", "Guardian", "Guardian", "NYT", "NYT", "NYT")
+sent_comparison$War <- c("Afghanistan", "Syria", "Ukraine", "Afghanistan", "Syria", "Ukraine")
+sent_comparison$Pos <- c(mean(afgh_sent$pos_neg),
+                         mean(syria_sent$pos_neg),
+                         mean(ukraine_sent$pos_neg),
+                         mean(nyt_afgh_sent$pos_neg),
+                         mean(nyt_syria_sent$pos_neg),
+                         mean(nyt_ukraine_sent$pos_neg))
+
+# sent_comparison
+
+comp_sent_plot <- sent_comparison %>%
+  ggplot(aes(x=War, y=Pos, fill = Newspaper))+
+  geom_bar(position = "dodge", stat="identity")
+comp_sent_plot
+
+afgh_sent_plot <- ggplot()+
+  geom_line(afgh_by_year, mapping = aes(x=year, y=pos_neg), size = 1, color = "royalblue")+
+  geom_line(nyt_afgh_by_year, mapping = aes(x=year, y=pos_neg, group=1), size = 1, color = "firebrick")+
+  ylim(0.3, 0.55)+
+  labs(title = "Sentiment Analysis: Afghanistan War", y="Positivity Score")
+afgh_sent_plot
+
+syria_sent_plot <- ggplot()+
+  geom_line(syria_by_year, mapping = aes(x=year, y=pos_neg), size = 1, color = "royalblue")+
+  geom_line(nyt_syria_by_year, mapping = aes(x=as.numeric(year), y=pos_neg, group=1), size = 1, color = "firebrick")+
+  ylim(0.3, 0.55)+
+  labs(title = "Sentiment Analysis: Syria War", y="Positivity Score")
+syria_sent_plot
+
+ukraine_sent_plot <- ggplot()+
+  geom_line(ukraine_by_year, mapping = aes(x=year, y=pos_neg), size = 1, color = "royalblue")+
+  geom_line(nyt_ukraine_by_year, mapping = aes(x=year, y=pos_neg, group=1), size = 1, color = "firebrick")+
+  ylim(0.3, 0.55)+
+  labs(title = "Sentiment Analysis: Ukraine War", y="Positivity Score")
+ukraine_sent_plot
+
+```
+
+In general one can say that the Guardian has a more positive broadcasting style then the New York Times.
+This is consistent over all the wars and only in certain years has the New York Times a higher average Sentiment score than the Guardian.
+But it is noticeable that the difference is larger and even more consistent in the war in Syria. In comparison, in the Afghanistan war (in which the USA was the leading party) the New York Times has in three years a higher positivity score than the Guardian and also the fluctuation is very high.
+The difference between the newspapers could be a result of a broadcasting style or also of political agendas. The results from the New york Times suggests that there is something to further look into. But the differences could also be the result of language norms in the two different countries.
+
+## Word Frequency
+
+```{r}
+load("Data/afgh_dfm.RData")
+load("Data/syria_dfm.RData")
+load("Data/ukraine_dfm.RData")
+load("Data/nyt_afgh_dfm.RData")
+load("Data/nyt_syria_dfm.RData")
+load("Data/nyt_ukraine_dfm.RData")
+```
+
+#### Afghanistan
+
+```{r}
+afgh_textplot <- textplot_wordcloud(afgh_dfm, 
+                   max_words = 50, 
+                   random_order = FALSE,
+                   rotation = .3,
+                   color = RColorBrewer::brewer.pal(8, "Dark2"))
+nyt_afgh_textplot <- textplot_wordcloud(nyt_afgh_dfm, 
+                   max_words = 50,
+                   random_order = FALSE,
+                   rotation = .3,
+                   color = RColorBrewer::brewer.pal(8, "Dark2"))
+
+```
+
+Here is a clear difference noticeable between the two newspapers.
+The New York Times uses the words "Afghanistan" and especially "Taliban" much more often then the Guardian.
+This is to be expected since the USA (the origin country of the New York Times) began the war in Afghanistan after the 9/11 terrorist attack executed by the Taliban.
+This led to the Taliban being the concept of the enemy.
+
+#### Syria
+
+```{r}
+syria_textplot <- textplot_wordcloud(syria_dfm, 
+                   max_words = 50, 
+                   random_order = FALSE,
+                   rotation = .3,
+                   color = RColorBrewer::brewer.pal(8, "Dark2"))
+nyt_syria_textplot <- textplot_wordcloud(nyt_syria_dfm, 
+                   max_words = 50,
+                   random_order = FALSE,
+                   rotation = .3,
+                   color = RColorBrewer::brewer.pal(8, "Dark2"))
+```
+
+There are no real notable differences between the newspapers visible.
+
+#### Ukraine
+
+```{r}
+ukraine_textplot <- textplot_wordcloud(ukraine_dfm, 
+                   max_words = 50, 
+                   random_order = FALSE,
+                   rotation = .3,
+                   color = RColorBrewer::brewer.pal(8, "Dark2"))
+nyt_ukraine_textplot <- textplot_wordcloud(nyt_ukraine_dfm, 
+                   max_words = 50,
+                   random_order = FALSE,
+                   rotation = .3,
+                   color = RColorBrewer::brewer.pal(8, "Dark2"))
+```
+
+There are no real notable differences between the newspapers visible.
+
+### Over all Word Frequencies
+
+It is difficult here to make a general statement.
+The noticeable differences between the newspaper could be from the involvement of the country of origin or also from language norms.
+It is difficult to spot if a difference really comes from a different style of news portrayal.
+One consistent difference is that the Guardian uses the word "war" much more often then the New York Times.
+On the other hand it is noticeable that the New York Times very often uses the word "mr" which would suggest a more person-related coverage.
+But I would argue that that's a result of different language norms in the UK and US.
+
+## Policy Agendas
+
+```{r}
+load("Data/afgh_pol.RData")
+load("Data/syria_pol.RData")
+load("Data/ukraine_pol.RData")
+load("Data/nyt_afgh_pol.RData")
+load("Data/nyt_syria_pol.RData")
+load("Data/nyt_ukraine_pol.RData")
+```
+
+```{r warning=FALSE}
+afgh_pol_total <- afgh_pol %>% select(-year) %>%
+  colSums(.) %>%
+  enframe()
+afgh_pol_total$war <- "Afghanistan"
+afgh_pol_total$newspaper <- "Guardian"
+
+syria_pol_total <- syria_pol %>% select(-year) %>%
+  colSums(.) %>%
+  enframe()
+syria_pol_total$war <- "Syria"
+syria_pol_total$newspaper <- "Guardian"
+
+ukraine_pol_total <- ukraine_pol %>% select(-year) %>%
+  colSums(.) %>%
+  enframe()
+ukraine_pol_total$war <- "Ukraine"
+ukraine_pol_total$newspaper <- "Guardian"
+
+nyt_afgh_pol_total <- nyt_afgh_pol %>% select(-year) %>%
+  colSums(.) %>%
+  enframe()
+nyt_afgh_pol_total$war <- "Afghanistan"
+nyt_afgh_pol_total$newspaper <- "NYT"
+
+nyt_syria_pol_total <- nyt_syria_pol %>% select(-year) %>%
+  colSums(.) %>%
+  enframe()
+nyt_syria_pol_total$war <- "Syria"
+nyt_syria_pol_total$newspaper <- "NYT"
+
+nyt_ukraine_pol_total <- nyt_ukraine_pol %>% select(-year) %>%
+  colSums(.) %>%
+  enframe()
+nyt_ukraine_pol_total$war <- "Ukraine"
+nyt_ukraine_pol_total$newspaper <- "NYT"
+
+pol_total <- rbind(afgh_pol_total, syria_pol_total, ukraine_pol_total, 
+                   nyt_afgh_pol_total, nyt_syria_pol_total, nyt_ukraine_pol_total)
+
+
+pol_total_plot <- pol_total %>% 
+  filter(name %in% c("defence", "energy", "foreign_trade", "intl_affairs", "macroeconomics", "religion")) %>%
+  ggplot(aes(x=newspaper, y=value, fill = name))+
+  geom_bar(stat = "identity",
+           position = "fill")+
+  facet_grid(~ war)+
+  labs(title = "Political Agendas - Selection 1", y="Share", x="Newspaper")+
+  scale_fill_discrete(name = "Political Agendas")
+pol_total_plot
+
+pol_total_plot_2 <- pol_total %>% 
+  filter(name %in% c("foreign_trade", "intl_affairs", "crime", "religion", "culture", "energy")) %>%
+  ggplot(aes(x=newspaper, y=value, fill = name))+
+  geom_bar(stat = "identity",
+           position = "fill")+
+  facet_grid(~ war)+
+  labs(title = "Political Agendas - Selection 2", y="Share", x="Newspaper")+
+  scale_fill_discrete(name = "Political Agendas")
+pol_total_plot_2
+
+
+```
+
+The comparison shows that there are some differences between the two newspapers.
+For the Afghanistan war the New York Times seems to concentrate much more on the "defence" part than the Guardian, the same holds for the war in Ukraine.
+The second selection shows probably the most consistent difference between the two: culture.
+Over all three wars the Guardian reports much more about the culture aspect.
+Other major differences are that the New York Times covers more crime in the Afghanistan war and a lot more religion in the Syrian war.
+
+When comparing the wars there are not many clear differences.
+The differences get mainly concealed by the differences between the newspapers.
+Nevertheless there are some notable results.
+Defence is more covered in the Afghanistan war then in the other two, Energy seems to be more important for the war in Ukraine and religion is a larger part in the Syrian war.
+
+# Conclusion
+
+Over all there were some noticeable differences especially between the two newspapers.
+But one problem is consistent over all the analysis methods.
+It is very difficult to say if the differences in the result come from the differences between the two publishers or from the differences between the two origin countries.
+To control for that part I would need to look at other newspapers from the two countries to check how newspaper within a country differ from each other.
+In further research it would also be interesting to dive deeper into each one of the analysis methods.
+For example would it be interesting to see how the sentiment changes when filtering out articles which contain specific words like "America" or "Russia".
+
+Another important aspect is the data gathering.
+I chose to use the simple search terms "Afghanistan war", "Syria war" and "Ukraine war".
+A completely unrelated difference between the two newspapers could be in the search algorithm of their API. I don't know how broadly they decide if an article matches a search term or not. So one newspaper could include a much broader variety of articles.
+Such technical differences could change the outcome of this research.
+
+In conclusion, no real interpretive statement can be made.
+But this work has shown that there is something to look for and it can inspire further research to get to the bottom of the original question of this paper.
