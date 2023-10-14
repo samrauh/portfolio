@@ -10,3 +10,6 @@
 > Award: 
 
 This is my thesis for my bachelor in Sociology.
+
+
+Restricted data access
