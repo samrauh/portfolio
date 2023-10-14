@@ -1,0 +1,886 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      eval = F,
+                      results = "hide",
+                      warning = F,
+                      message = F,
+                      fig.show='hide')
+```
+
+Note: In diesem Script wird der Begriff "Gender" verwendet. Dabei handelt es sich nicht um den richtigen Begriff, "sex" wäre an dieser Stelle angemessener gewesen, da die gender-variable nur zwei verschiedene Auspräungen hat.
+
+##Libraries aktivieren
+
+```{r results='hide', warning=FALSE, message=F}
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library (stargazer)
+# library(summarytools)
+library(haven)
+library(Hmisc)
+library(magrittr)
+# library(stringi)
+library(vegan)
+library(readxl)
+# library(fuzzyjoin)
+library(jtools)
+library(visreg)
+library(WDI)
+library(table1)
+library(ggeffects)
+```
+
+##loading data
+
+```{r}
+path <- "Daten/companies/"
+data_pre <- list.files(path = path) %>%
+  map_df(~read.csv(paste0(path, .), fileEncoding = "UTF-16", sep = '\t'))
+
+```
+
+##Preprocessing Data
+
+```{r}
+data_pre[data_pre == ""] <- NA
+data_pre[data_pre=="n.v."] <- NA
+
+names(data_pre) <- c("index", "name", "id", "country_id", "country", "worldregion", "n_employees", 
+                 "year", "tobins_q", "roa", "roe", "p_name", "p_id", "p_date_from", "p_date_to", 
+                 "p_curent_previous", "p_gender", "p_nationality")
+
+
+data_pre$n_employees <- as.numeric(data_pre$n_employees)
+data_pre$roa <- as.numeric(data_pre$roa)
+data_pre$roe <- as.numeric(data_pre$roe)
+data_pre$tobins_q <- as.numeric(data_pre$tobins_q)
+
+companies_all <- data_pre[1:11] %>% 
+  distinct(id, .keep_all = T)
+
+
+for (col in names(data_pre)[1:4]) {
+  data_pre <- data_pre %>% 
+    fill(col)
+}
+
+data_pre <- filter(data_pre, p_curent_previous=="Current")
+
+```
+
+##Deal with duplicates
+
+```{r}
+data <- distinct(data_pre, id, p_id, .keep_all = T)
+
+board <- data[12:18]
+
+board_size <- data %>%
+  select(id) %>%
+  group_by(id) %>%
+  summarise(count = n()) %>%
+  rename(board_size = count)
+
+company <- left_join(companies_all, board_size, by="id")
+
+write.csv(data, "Daten/data.csv", row.names = F)
+write.csv(company, "Daten/company.csv", row.names = F)
+
+```
+
+##Getting GDP Data
+
+```{r}
+countries <- unique(data$country_id)
+
+gdp <- WDI(indicator='NY.GDP.PCAP.PP.KD', country=countries, start=1960, end=2022) %>%
+  select(year, iso2c, gdp_ppp = NY.GDP.PCAP.PP.KD)
+
+```
+
+Calculate diversity Scores: Blau's Index of heterogenity and binary values
+
+##Nationalität Preprocessing
+
+```{r}
+data$p_nationality_first <- sub(";.*", "", data$p_nationality)
+
+count_non_na <- function(x) {
+  sum(!is.na(x))
+}
+
+nationalities <- data %>%
+  select(id, p_id, p_nationality_first) %>%
+  mutate(dummy_id = row_number()) %>%
+  transform(count = 1) %>%
+  pivot_wider(id_cols = c(id, p_id, dummy_id), names_from = p_nationality_first, values_from = count) %>%
+  group_by(id) %>%
+  summarise(across(.cols = -c(p_id, dummy_id), .fns = count_non_na)) %>%
+  rename(na = "NA")
+
+# calculating Blau's Index of heterogenity
+nationalities$nat_blaus <- nationalities %>%
+  select(-c(id, na)) %>%
+  diversity(., index = "simpson")
+nationalities$nat_bin <- case_when(nationalities$nat_blaus == 0 ~ "Nein",
+                                   nationalities$nat_blaus != 0 ~ "Ja")
+nationalities$nat_bin <- as_factor(nationalities$nat_bin)
+nationalities$nat_bin <- relevel(nationalities$nat_bin, ref = "Nein")
+
+### Code all diversity values as NA which have at least 1 nationality as NA
+nationalities$nat_blaus[nationalities$na != 0] <- NA
+nationalities$nat_bin[nationalities$na != 0] <- NA
+
+
+companies_nat <- left_join(company, nationalities, by="id")
+
+### trying to include some of the companies containing NAs
+# companies_nat$na_perc <- companies_nat$na/companies_nat$board_size
+# companies_nat$noNa <- companies_nat$board_size - companies_nat$na
+# companies_nat$nat_blaus[companies_nat$na_perc < 0.5 & companies_nat$noNa > 1] <- NA
+# companies_nat$nat_bin[companies_nat$na_perc < 0.5 & companies_nat$noNa > 1] <- NA
+
+# loading and combining MIPEX data
+
+mipex_countries <- excel_sheets("Daten/MIPEX.xlsx")
+
+mipex <- data.frame(country = character(), year = integer(), score = numeric(), stringsAsFactors = FALSE)
+
+for (c in mipex_countries) {
+  mipex_temp <- read_excel("Daten/MIPEX.xlsx", sheet = c)
+
+  df <- data.frame(year = mipex_temp$`Overall Scores`[2:14])
+  df$score <- mipex_temp$...4[2:14]
+  df$country <- c
+
+  mipex <- rbind(mipex, df)
+}
+
+write.csv(mipex, "Daten/mipex_1.csv", row.names = F)
+mipex <- read.csv("Daten/mipex_1.csv")
+
+mipex <- mipex %>%
+  filter(!is.na(score))
+
+### Joining data and MIPEX
+
+companies_nat_joined_pre <- left_join(companies_nat, mipex, by = c("country_id" = "country"))
+companies_nat_joined_pre$distance_year <- abs(companies_nat_joined_pre$year.x - companies_nat_joined_pre$year.y)  
+
+# average standard deviation in MIPEX per country
+mean(aggregate(mipex$score, list(mipex$country), FUN = sd)$x)
+
+# taking mipex value from closest year
+companies_nat_joined <- companies_nat_joined_pre %>%
+  group_by(id) %>%
+  slice(which(distance_year == min(distance_year)|is.na(distance_year))) %>%
+  distinct(id, .keep_all = T)
+  
+
+companies_nat_joined <- merge(companies_nat_joined, gdp, by.x=c("year.x", "country_id"), by.y = c("year", "iso2c"), all.x = T)
+
+save(companies_nat_joined, file = "Daten/companies_nat.RData")
+```
+
+##Geschlecht Preprocessing
+
+```{r warning=FALSE}
+gender <- data %>%
+  select(id, p_gender) %>%
+  group_by(id, p_gender) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = p_gender, values_from = count, values_fill = 0) %>%
+  rename(f=F, m=M, na="NA") %>%
+  filter(f != 0 | m != 0) %>%
+  ungroup()
+
+gender$gender_blaus <- gender %>% 
+  select(f, m) %>%
+  diversity(., index = "simpson")
+
+gender$gender_bin <- case_when(gender$gender_blaus == 0 ~ "Nein",
+                                   gender$gender_blaus != 0 ~ "Ja")
+gender$gender_bin <- as_factor(gender$gender_bin)
+gender$gender_bin <- relevel(gender$gender_bin, ref = "Nein")
+
+gender$gender_blaus[gender$na != 0] <- NA
+gender$gender_bin[gender$na != 0] <- NA
+
+
+companies_gen <- left_join(company, gender, by="id")
+
+wbl <- read.csv("Daten/WBL-1971-2023-Dataset.CSV", sep = ";") %>%
+  select(iso_3 = ISO.Code, year = Report.Year, wbl_index = WBL.INDEX)
+wbl$wbl_index <- as.numeric(gsub(",", ".", wbl$wbl_index))
+
+iso_conversion <- read.csv("Daten/countries_codes_and_coordinates.csv") %>%
+  select(iso_2 = Alpha.2.code, iso_3 = Alpha.3.code) %>%
+  apply(., 2, function(x) gsub(" ", "", x))
+
+wbl_joined <- merge(wbl, iso_conversion, by="iso_3", all.x = T)
+wbl_joined <- unique(wbl_joined[!duplicated(wbl_joined[, c("iso_2", "year")]), ])
+wbl_joined <- na.omit(wbl_joined)
+
+companies_gen_joined <- merge(companies_gen, wbl_joined, by.x=c("year", "country_id"), by.y = c("year", "iso_2"), all.x = T)
+companies_gen_joined <- merge(companies_gen_joined, gdp, by.x=c("year", "country_id"), by.y = c("year", "iso2c"), all.x = T)
+
+
+save(companies_gen_joined, file = "Daten/companies_gen.RData")
+```
+
+##Stichproben Tabelle
+
+```{r}
+table1(~roa + roe + n_employees, data=companies_all)
+table1(data=data, ~p_gender + p_nationality)
+
+table1(data=companies_nat_joined, ~nat_blaus + nat_bin + score + n_employees + board_size + gdp_ppp)
+table1(data=companies_gen_joined, ~gender_blaus + gender_bin + wbl_index + n_employees + board_size + gdp_ppp)
+
+companies_combined <- full_join(select(companies_nat_joined, id, nat_blaus, nat_bin, score, n_employees, board_size, gdp_ppp, roa, roe), select(companies_gen_joined, id, gender_blaus, gender_bin, wbl_index), by = "id")
+
+table1(data = companies_combined, ~nat_blaus + nat_bin + score + roa + n_employees + gdp_ppp)
+table1(data = companies_combined, ~gender_blaus + gender_bin + wbl_index + roe + board_size)
+
+```
+
+##Univariate Analyse Tobin's Q
+
+```{r}
+
+plot_tobinsq <- ggplot(companies_all, aes(x=tobins_q))+
+  geom_histogram(fill="firebrick")+
+  scale_y_log10()+
+  theme_bw()+
+  labs(title = "Univariate Verteilung: Tobin's Q - logarithmiert",
+       x = "Tobin's Q", y = "Anzahl Ausprägungen",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 52'872")
+
+  
+ggsave(plot = plot_tobinsq, "Exporte/Univariat/tobinsq_hist.png", width = 8, height = 6)
+
+summary(companies_all$tobins_q)
+
+```
+
+#Analysis Nationalities
+
+##Uni und Bivariat
+
+```{r warning=F}
+load("Daten/companies_nat.RData")
+
+companies_nat_final <- companies_nat_joined %>%
+  filter(board_size > 1) %>%
+  select(id, nat_blaus, nat_bin, score, n_employees, board_size, gdp_ppp, roa, roe, country_id) %>%
+  na.omit()
+
+### Univariat
+nat_blaus_hist <- ggplot(companies_nat_final, aes(x=nat_blaus))+
+  geom_histogram(fill="firebrick", binwidth = 0.1, color = "black")+
+  labs(title = "Univariate Verteilung: Blau's Index of Heterogenity ach Nationalität",
+       subtitle = "Blau's Index of Heterogenity",
+       x = "MIPEX Wert", y = "Häufigkeit",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 5'520")+
+  theme_bw()
+nat_blaus_hist
+
+ggplot(companies_nat_final, aes(x=nat_bin))+
+  geom_bar()
+
+ggplot(companies_nat_final, aes(x=score))+
+  geom_histogram()
+
+
+### Bivariat
+
+nat_bi_blaus_roa <- companies_nat_final %>%
+  lm(formula = roa ~ nat_blaus)
+summary(nat_bi_blaus_roa)
+
+stargazer(nat_bi_blaus_roa, type = "html", out = "Exporte/Bivariat/nat_bi_blaus_roa.html")
+
+nat_bi_bin_roa <- companies_nat_final %>%
+  lm(formula = roa ~ nat_bin)
+stargazer(nat_bi_bin_roa, type = "html", out = "Exporte/Bivariat/nat_bi_bin_roa.html")
+
+nat_bi_bin_roe <- companies_nat_final %>%
+  lm(formula = roe ~ nat_bin)
+
+nat_bi_blaus_roe <- companies_nat_final %>%
+  lm(formula = roe ~ nat_blaus)
+
+
+plot_bi_nat_blaus_roa <- ggplot(companies_nat_final, aes(x=nat_blaus, y=roa))+
+  geom_jitter(size=3, alpha=0.2)+
+  geom_smooth(method = "lm")+
+  labs(title = "Nationsdiversität und Firmenperformance",
+       subtitle = "Auswirkung von Diversität der Nationalitäten in Verwaltungsräten auf die Performance der Firmen",
+       x="Blaus's Index of Heterogenity", y = "Return on Assents",
+       caption = "Quelle: Orbis (Bureau van Dijk), n=13'613")+
+  theme_bw()
+plot_bi_nat_blaus_roa
+ggsave("Exporte/Bivariat/nat_blaus.png", plot = plot_bi_nat_blaus_roa, width = 8, height = 6)
+
+plot_bi_nat_bin_roa <- ggplot(companies_nat_final, aes(x=as.factor(nat_bin), y=roa, fill = as.factor(nat_bin)))+
+  geom_boxplot()+
+  geom_jitter(alpha=0.2)+
+  scale_x_discrete(labels = c("Nein", "Ja"))+
+  labs(title = "Nationsdiversität und Firmenperformance",
+       subtitle = "Auswirkung von Diversität der Nationalitäten in Verwaltungsräten auf die Performance der Firmen",
+       x="Mehr als eine Nationlaität im Verwaltungsrat", y = "Return on Assents",
+       caption = "Quelle: Orbis (Bureau van Dijk), n=13'613")+
+  theme_bw()+
+  theme(legend.position = "none")
+plot_bi_nat_bin_roa
+ggsave("Exporte/Bivariat/nat_bin.png", plot = plot_bi_nat_bin_roa, width = 8, height = 6)
+
+```
+
+##Multivariat
+
+```{r warning=F}
+
+nat_m_blaus_roa_1 <- companies_nat_final %>%
+  lm(., formula = roa  ~ nat_blaus + n_employees + board_size + gdp_ppp)
+
+summary(nat_m_blaus_roa_1)
+
+nat_m_bin_roa_1 <- companies_nat_final %>%
+  lm(., formula = roa  ~ nat_bin + n_employees + board_size + gdp_ppp)
+summary(nat_m_bin_roa_1)
+
+nat_m_blaus_roe_1 <- companies_nat_final %>%
+  lm(., formula = roe  ~ nat_blaus + n_employees + board_size + gdp_ppp)
+
+nat_m_bin_roe_1 <- companies_nat_final %>%
+  lm(., formula = roe  ~ nat_bin + n_employees + board_size + gdp_ppp)
+
+stargazer(nat_m_bin_roa_1, nat_m_blaus_roa_1, nat_m_bin_roe_1, nat_m_blaus_roe_1, 
+          type = "text", title = "Natioanlitätsdiversität und Firmenperformance")
+
+### Bi und Multivariate Modell darstellung
+
+stargazer(nat_bi_bin_roa, nat_m_bin_roa_1, nat_bi_blaus_roa, nat_m_blaus_roa_1, 
+          type = "html", title = "Nationalitätendiversität und Firmenperformance: ROA",
+          star.cutoffs = c(0.05, 0.01, 0.001), 
+          single.row = T, 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          dep.var.caption = "", 
+          dep.var.labels = "", 
+          column.labels = c("Bivariates Modell", "Multivariates Modell", "Bivariates Modell", "Multivariates Modell"),
+          covariate.labels = c("Diversität: Binär", "Diversität: Blau's Index", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "GDP"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          order = c(1, 5, 2, 3, 4), 
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/multivariat/table_nat_multi_roa.doc")
+          
+stargazer(nat_bi_bin_roe, nat_m_bin_roe_1, nat_bi_blaus_roe, nat_m_blaus_roe_1, 
+          type = "html", title = "Nationalitätendiversität und Firmenperformance: ROE",
+          star.cutoffs = c(0.05, 0.01, 0.001), 
+          single.row = T, 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          dep.var.caption = "", 
+          dep.var.labels = "", 
+          column.labels = c("Bivariates Modell", "Multivariates Modell", "Bivariates Modell", "Multivariates Modell"),
+          covariate.labels = c("Diversität: Binär", "Diversität: Blau's Index", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "GDP"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          order = c(1, 5, 2, 3, 4), 
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/multivariat/table_nat_multi_roe.doc")
+
+(0.86*5.685)/sd(companies_nat_final$roa)
+
+```
+
+## Linearitätsprüfung
+
+```{r warning=F}
+
+summary(companies_nat_final$nat_blaus)
+
+companies_nat_low <- companies_nat_final %>%
+  filter(nat_blaus <= 0.3)
+
+companies_nat_high <- companies_nat_final %>%
+  filter(nat_blaus > 0.3)
+
+ggplot(companies_nat_final, aes(x=nat_blaus, y=roa))+
+  geom_jitter(size=2, alpha=0.3)+
+  labs(title = "Nationsdiversität und Firmenperformance",
+       subtitle = "Auswirkung von Diversität der Nationalitäten in Verwaltungsräten auf die Performance der Firmen",
+       x="Blaus's Index of Heterogenity", y = "Return on Assents",
+       caption = "Quelle: Orbis (Bureau van Dijk), n=13'613")+
+  theme_bw()+
+  geom_smooth(data = companies_nat_high, aes(x=nat_blaus, y=roa), method = "lm")+
+  geom_smooth(data = companies_nat_low, aes(x=nat_blaus, y=roa), method = "lm", color = "red")+
+  coord_cartesian(ylim = c(-15, 15))
+
+nat_m_roa_low <- companies_nat_low %>%
+  lm(., formula = roa  ~ nat_blaus + n_employees + board_size + gdp_ppp)
+
+nat_m_roa_high <- companies_nat_high %>%
+  lm(., formula = roa  ~ nat_blaus + n_employees + board_size + gdp_ppp)
+
+nat_m_roe_low <- companies_nat_low %>%
+  lm(., formula = roe  ~ nat_blaus + n_employees + board_size + gdp_ppp)
+
+nat_m_roe_high <- companies_nat_high %>%
+  lm(., formula = roe  ~ nat_blaus + n_employees + board_size + gdp_ppp)
+
+stargazer(nat_m_roa_low, nat_m_roa_high, nat_m_roe_low, nat_m_roe_high,
+          type = "html", title = "Multigruppenanalyse",
+          star.cutoffs = c(0.05, 0.01, 0.001), 
+          single.row = T, 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          dep.var.caption = "", 
+          dep.var.labels = "", 
+          column.labels = c("Diversität Tief", "Diversität Hoch", "Diversität Tief", "Diversität Hoch"),
+          covariate.labels = c("Diversität: Blau's Index", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "BIP"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/multivariat/multigruppenanalyse_nat.doc")
+
+
+```
+
+##Moderationsmodell
+
+```{r warning=F}
+
+
+nat_blaus_roa <- companies_nat_final %>%
+  lm(., formula = roa  ~ nat_blaus * score + n_employees + board_size + gdp_ppp)
+summary(nat_blaus_roa)
+
+nat_bin_roa <- companies_nat_final %>%
+  lm(., formula = roa  ~ nat_bin * score + n_employees + board_size + gdp_ppp)
+summary(nat_bin_roa)
+
+
+nat_blaus_roe <- companies_nat_final %>%
+  lm(., formula = roe  ~ nat_blaus * score + n_employees + board_size + gdp_ppp)
+
+nat_bin_roe <- companies_nat_final %>%
+  lm(., formula = roe  ~ nat_bin * score + n_employees + board_size + gdp_ppp)
+
+stargazer(nat_bin_roa, nat_blaus_roa, nat_bin_roe, nat_blaus_roe, 
+          type = "html", title = "Nationalitätendiversität Moderationsanalyse", 
+          single.row = T,
+          dep.var.caption = "", 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          column.labels = c("Binär", "Blau's Index", "Binär", "Blau's Index"),
+          covariate.labels = c("Diversität: Binär", "Diversität: Blau's Index", "MIPEX Score", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "GDP", "Diversität Binär : MIPEX", "Diversität Blau's Index : MIPEX"), 
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/Moderation/table_nat_moderation.doc")
+
+
+### Robuste Standardfehler
+summ(nat_blaus_roa_1, digits = 3, robust = "HC3", cluster = "firm")
+summ(nat_blaus_roe_1, digits = 3, robust = "HC3", cluster = "firm")
+
+summ(nat_bin_roa_1, digits = 3, robust = "HC3", cluster = "firm")
+summ(nat_bin_roe_1, digits = 3, robust = "HC3", cluster = "firm")
+
+export_summs(nat_blaus_roa_1, nat_blaus_roe_1, nat_bin_roa_1, nat_bin_roe_1, 
+             robust = "HC3", cluster = "country_id",
+             model.names = c("Blau's Index - ROA", "Blau's Index - ROE", "Binär - ROA", "Binär - ROE"),
+             to.file = "docx",
+             file.name = "Exporte/Moderation/nat_robust.docx")
+
+```
+
+#Analysis Gender ##Uni und Bivariat
+
+```{r warning=F}
+load("Daten/companies_gen.RData")
+
+companies_gen_final <- companies_gen_joined %>%
+  filter(board_size >1) %>%
+  select(id, gender_blaus, gender_bin, wbl_index, n_employees, board_size, gdp_ppp, roa, roe, country_id) %>%
+  na.omit()
+
+### Univariat
+wbl_hist <- ggplot(companies_gen_final, aes(x=wbl_index))+
+  geom_histogram(fill="lightblue", binwidth = 10, color = "black")+
+  labs(title = "Univariate Verteilung: WBL-Index",
+       subtitle = "Women, Business and the Law Index",
+       x = "WBL-Index Wert", y = "Häufigkeit",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 38'353")+
+  theme_bw()
+wbl_hist
+ggsave("Exporte/Univariat/wbl_hist.png", plot = wbl_hist, height = 6, width = 8)
+
+### Bivariat
+
+gen_bi_blaus_roa <- companies_gen_final %>%
+  lm(formula = roa ~ gender_blaus)
+stargazer(gen_bi_blaus_roa, type = "html", out = "Exporte/Bivariat/gen_bi_blaus_roa.html")
+
+gen_bi_bin_roa <- companies_gen_final %>%
+  lm(formula = roa ~ gender_bin)
+stargazer(gen_bi_bin_roa, type = "html", out = "Exporte/Bivariat/gen_bi_bin_roa.html")
+
+gen_bi_blaus_roe <- companies_gen_final %>%
+  lm(formula = roe ~ gender_blaus)
+
+gen_bi_bin_roe <- companies_gen_final %>%
+  lm(formula = roe ~ gender_bin)
+
+
+plot_bi_gen_blaus_roa <- ggplot(companies_gen_final, aes(x=gender_blaus, y=roa))+
+  geom_bin2d(binwidth = c(0.05, 5))+
+  labs(title = "Geschlechterdiversität und Firmenperformance",
+       subtitle = "Auswirkung von Geschlechterdiversität in Verwaltungsräten auf die Performance der Firmen",
+       x="Blaus's Index of Heterogenity", y = "Return on Assents",
+       caption = "Quelle: Orbis (Bureau van Dijk), n=37'924")+
+  theme_bw()+
+  scale_fill_gradient(low = "lavenderblush", 
+                      high = "red")
+plot_bi_gen_blaus_roa
+ggsave("Exporte/Bivariat/gen_blaus.png", plot = plot_bi_gen_blaus_roa, width = 8, height = 6)
+
+plot_bi_gen_bin_roa <- ggplot(companies_gen_final, aes(x=as.factor(gender_bin), y=roa, fill = as.factor(gender_bin)))+
+  geom_boxplot()+
+  scale_x_discrete(labels = c("Nein", "Ja"))+
+  labs(title = "Geschlechterdiversität und Firmenperformance",
+       subtitle = "Auswirkung von Geschlechterdiversität in Verwaltungsräten auf die Performance der Firmen",
+       x="Mehr als ein Geschlecht im Verwaltungsrat", y = "Return on Assents",
+       caption = "Quelle: Orbis (Bureau van Dijk), n=37'924")+
+  theme_bw()+
+  theme(legend.position = "none")
+ggsave("Exporte/Bivariat/gen_bin.png", plot = plot_bi_gen_bin_roa, width = 8, height = 6)
+
+```
+
+##Multivariat
+
+```{r warning=F}
+
+### Multivariat
+
+gen_m_blaus_roa_1 <- companies_gen_final %>%
+  lm(., formula = roa  ~ gender_blaus + n_employees + board_size + gdp_ppp)
+
+gen_m_bin_roa_1 <- companies_gen_final %>%
+  lm(., formula = roa  ~ gender_bin + n_employees + board_size + gdp_ppp)
+
+gen_m_blaus_roe_1 <- companies_gen_final %>%
+  lm(., formula = roe  ~ gender_blaus + n_employees + board_size + gdp_ppp)
+
+gen_m_bin_roe_1 <- companies_gen_final %>%
+  lm(., formula = roe  ~ gender_bin + n_employees + board_size + gdp_ppp)
+
+stargazer(gen_m_bin_roa_1, gen_m_blaus_roa_1, gen_m_bin_roe_1, gen_m_blaus_roe_1, 
+          type = "text", title = "Geschlechterdiversität und Firmenperformance")
+
+### Bi und Multivariate Modell darstellung
+
+stargazer(gen_bi_bin_roa, gen_m_bin_roa_1, gen_bi_blaus_roa, gen_m_blaus_roa_1, 
+          type = "html", title = "Geschlechterdiversität und Firmenperformance: ROA",
+          star.cutoffs = c(0.05, 0.01, 0.001), 
+          single.row = T, 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          dep.var.caption = "", 
+          dep.var.labels = "", 
+          column.labels = c("Bivariates Modell", "Multivariates Modell", "Bivariates Modell", "Multivariates Modell"),
+          covariate.labels = c("Diversität: Binär", "Diversität: Blau's Index", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "GDP"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          order = c(1, 5, 2, 3, 4), 
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/multivariat/table_gen_multi_roa.doc")
+
+stargazer(gen_bi_bin_roe, gen_m_bin_roe_1, gen_bi_blaus_roe, gen_m_blaus_roe_1, 
+          type = "html", title = "Geschlechterdiversität und Firmenperformance: ROE",
+          star.cutoffs = c(0.05, 0.01, 0.001), 
+          single.row = T, 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          dep.var.caption = "", 
+          dep.var.labels = "", 
+          column.labels = c("Bivariates Modell", "Multivariates Modell", "Bivariates Modell", "Multivariates Modell"),
+          covariate.labels = c("Diversität: Binär", "Diversität: Blau's Index", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "GDP"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          order = c(1, 5, 2, 3, 4), 
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/multivariat/table_gen_multi_roe.doc")
+
+```
+
+##Linearitätsprüfung
+
+```{r warning=F}
+summary(companies_gen_final$gender_blaus)
+
+companies_gen_low <- companies_gen_final %>%
+  filter(gender_blaus <= 0.25)
+
+companies_gen_high <- companies_gen_final %>%
+  filter(gender_blaus > 0.25)
+
+ggplot(companies_gen_final, aes(x=gender_blaus, y=roa))+
+  geom_jitter(size=2, alpha=0.3)+
+  labs(title = "Nationsdiversität und Firmenperformance",
+       subtitle = "Auswirkung von Diversität der Nationalitäten in Verwaltungsräten auf die Performance der Firmen",
+       x="Blaus's Index of Heterogenity", y = "Return on Assents",
+       caption = "Quelle: Orbis (Bureau van Dijk), n=13'613")+
+  theme_bw()+
+  geom_smooth(data = companies_gen_high, aes(x=gender_blaus, y=roa), method = "lm")+
+  geom_smooth(data = companies_gen_low, aes(x=gender_blaus, y=roa), method = "lm", color = "red")+
+  coord_cartesian(ylim = c(-5, 5))
+
+
+gen_m_roa_low <- companies_gen_low %>%
+  lm(., formula = roa  ~ gender_blaus + n_employees + board_size + gdp_ppp)
+
+gen_m_roa_high <- companies_gen_high %>%
+  lm(., formula = roa  ~ gender_blaus + n_employees + board_size + gdp_ppp)
+
+gen_m_roe_low <- companies_gen_low %>%
+  lm(., formula = roe  ~ gender_blaus + n_employees + board_size + gdp_ppp)
+
+gen_m_roe_high <- companies_gen_high %>%
+  lm(., formula = roe  ~ gender_blaus + n_employees + board_size + gdp_ppp)
+
+stargazer(gen_m_roa_low, gen_m_roa_high, gen_m_roe_low, gen_m_roe_high,
+          type = "html", title = "Multigruppenanalyse",
+          star.cutoffs = c(0.05, 0.01, 0.001), 
+          single.row = T, 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          dep.var.caption = "", 
+          dep.var.labels = "", 
+          column.labels = c("Diversität Tief", "Diversität Hoch", "Diversität Tief", "Diversität Hoch"),
+          covariate.labels = c("Diversität: Blau's Index", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "BIP"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/multivariat/multigruppenanalyse_gen.doc")
+
+gen_m_roa_quad <- companies_gen_final %>%
+  lm(., formula = roa  ~ gender_blaus + I(gender_blaus^2) + n_employees + board_size + gdp_ppp)
+
+gen_m_roe_quad <- companies_gen_final %>%
+  lm(., formula = roe  ~ gender_blaus + I(gender_blaus^2) + n_employees + board_size + gdp_ppp)
+
+stargazer(gen_m_roa_quad, gen_m_roe_quad,
+          type = "html", title = "Quadriertes Modell",
+          star.cutoffs = c(0.05, 0.01, 0.001), 
+          single.row = T, 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          dep.var.caption = "", 
+          dep.var.labels = "",
+          column.labels = c("ROA", "ROE"),
+          covariate.labels = c("Diversität: Blau's Index", "Diversität: Blau's Index ^2"  ,"Anz. Mitarbeiter", "Grösse Verwaltungsrat", "BIP"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern",
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/multivariat/quad_gen.doc")
+
+plot_quad_gen_roa <- visreg(gen_m_roa_quad, "gender_blaus", gg = T)+
+  coord_cartesian(ylim = c(-5, 30))+
+  theme_bw(base_size = 15)+
+  labs(title = "Quadriertes Modell",
+       x="Blau's Index", y = "ROA",
+       subtitle = "Auswirkung von Geschlechterdiversität auf Firmenperformance",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 16'661")
+
+plot_m_gen_roa <- visreg(gen_m_blaus_roa_1, "gender_blaus", gg = T)+
+  coord_cartesian(ylim = c(-5, 30))+
+  theme_bw(base_size = 15)+
+  labs(title = "Lineares Modell",
+       x="Blau's Index", y = "ROA",
+       subtitle = "Auswirkung von Geschlechterdiversität auf Firmenperformance",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 16'661")
+
+ggsave(plot = plot_quad_gen_roa, "Exporte/multivariat/plot_quad_gen_roa.png", width = 8, height = 6)
+ggsave(plot = plot_m_gen_roa, "Exporte/multivariat/plot_m_gen_roa.png", width = 8, height = 6)
+
+# Finding minimum of quadratic function
+gen_quad <- function(x){gen_m_roa_quad$coefficients[1]+gen_m_roa_quad$coefficients[2]*x+gen_m_roa_quad$coefficients[3]*x^2}
+
+optimize(gen_quad, interval = c(-10, 10), maximum = F)
+
+ggpredict(gen_m_roa_quad, terms = "gender_blaus[0, 0.25, 0.5]")
+ggpredict(gen_m_blaus_roa_1, terms = "gender_blaus[0, 0.25, 0.5]")
+
+```
+
+##Moderationsanalyse
+
+```{r warning=F}
+
+gen_blaus_roa_1 <- companies_gen_final %>%
+  lm(., formula = roa  ~ gender_blaus * wbl_index + n_employees + board_size + gdp_ppp)
+
+gen_bin_roa_1 <- companies_gen_final %>%
+  lm(., formula = roa  ~ gender_bin * wbl_index + n_employees + board_size + gdp_ppp)
+
+gen_blaus_roe_1 <- companies_gen_final %>%
+  lm(., formula = roe  ~ gender_blaus * wbl_index + n_employees + board_size + gdp_ppp)
+
+gen_bin_roe_1 <- companies_gen_final %>%
+  lm(., formula = roe  ~ gender_bin * wbl_index + n_employees + board_size + gdp_ppp)
+
+stargazer(gen_bin_roa_1, gen_blaus_roa_1, gen_bin_roe_1, gen_blaus_roe_1, 
+          type = "html", title = "Geschlechterdiversität Moderationsanalyse", 
+          single.row = T,
+          dep.var.caption = "", 
+          omit.stat = c("f", "ser", "adj.rsq"),
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          column.labels = c("Binär", "Blau's Index", "Binär", "Blau's Index"),
+          covariate.labels = c("Diversität: Binär", "Diversität: Blau's Index", "WBL Score", "Anz. Mitarbeiter", "Grösse Verwaltungsrat", "GDP", "Diversität Binär : WBL", "Diversität Blau's Index : WBL"),
+          notes = "Date: Orbis - Bureau van Dijk, Standardfehler in Klammern", 
+          digits = 2,
+          digits.extra = 5,
+          out = "Exporte/Moderation/table_gen_moderation.doc")
+
+### Robuste Standardfehler
+
+summ(gen_blaus_roa_1, digits = 3, robust = "HC3", cluster = "country_id")
+
+export_summs(gen_blaus_roa_1, gen_blaus_roe_1, gen_bin_roa_1, gen_bin_roe_1, 
+             robust = "HC3", cluster = "country_id",
+             model.names = c("Blau's Index - ROA", "Blau's Index - ROE", "Binär - ROA", "Binär - ROE"),
+             to.file = "docx",
+             file.name = "Exporte/Moderation/gen_robust.docx")
+
+```
+
+##Interactions Visualisierung
+
+```{r}
+int_plot_nat_blaus <- visreg(nat_blaus_roa_1, "nat_blaus", by="score", 
+    overlay = TRUE, partial = FALSE, rug = F, breaks = c(50, 75, 95), gg = T) +
+  theme_bw()+
+  labs(title = "Interaktionsmodell: WBL-Index",
+       x="Blau's Index", Y="ROA", colour = "MIPEX", fill = "MIPEX")
+int_plot_nat_blaus
+
+int_plot_nat_bi <- visreg(nat_bin_roa_1, "nat_bin", by="score", 
+    overlay = TRUE, partial = FALSE, rug = F, breaks = c(50, 75, 95), gg = T) +
+  theme_bw()+
+  labs(title = "Interaktionsmodell: WBL-Index",
+       x="Diversität: Binär", Y="ROA")
+int_plot_nat_bi
+
+
+
+int_plot_gen_blaus <- visreg(gen_blaus_roa_1, "gender_blaus", by="wbl_index", 
+    overlay = TRUE, partial = FALSE, rug = F, breaks = c(30, 65, 100), gg = T) +
+  theme_bw(base_size = 15)+
+  labs(title = "Interaktionsmodell: WBL-Index",
+       x="Blau's Index", colour = "WBL-Score", fill = "WBL-Score", y = "ROA",
+       subtitle = "Auswirkung von Geschlechterdiversität auf Performance nach WBL-Index",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 16'661")+
+  coord_cartesian(ylim = c(-5, 25))+
+  theme()
+int_plot_gen_blaus
+ggsave(plot = int_plot_gen_blaus, "Exporte/Moderation/plot_gen_blaus.png", width = 8, height = 6)
+
+
+int_plot_gen_bi <- visreg(gen_bin_roa_1, "gender_bin", by="wbl_index", 
+    overlay = TRUE, partial = FALSE, rug = F, breaks = c(30, 65, 100), gg = T) +
+  scale_x_continuous(breaks = c(0, 1), labels = c("Nein", "Ja"))+
+  theme_bw(base_size = 15)+
+  labs(title = "Interaktionsmodell: WBL-Index",
+       x="Mehr als ein Geschlecht im Verwaltungsrat", colour = "WBL-Score", fill = "WBL-Score",
+       subtitle = "Auswirkung von Geschlechterdiversität auf Performance nach WBL-Index",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 16'661", y = "ROA")+
+  coord_cartesian(ylim = c(-5, 25))
+int_plot_gen_bi
+ggsave(plot = int_plot_gen_bi, "Exporte/Moderation/plot_gen_bi.png", width = 8, height = 6)
+
+
+
+gen_bin_roa_2 <- companies_gen_final %>%
+  mutate(gender_bin2 = as_factor(gender_bin)) %>%
+  lm(., formula = roa  ~ gender_bin2 * wbl_index + n_employees + board_size + gdp_ppp)
+
+summary(gen_bin_roa_2)
+
+int_plot_gen_bi_2 <- visreg(gen_bin_roa_2, "gender_bin2", by="wbl_index", 
+    overlay = TRUE, partial = FALSE, rug = F, breaks = c(30, 65, 100), gg = T)+
+  scale_x_continuous(breaks = c(0.22222, 0.77777), labels = c("Nein", "Ja"))+
+  theme_bw(base_size = 15)+
+  labs(title = "Interaktionsmodell: WBL-Index",
+       x="Mehr als ein Geschlecht im Verwaltungsrat", colour = "WBL-Score", fill = "WBL-Score",
+       subtitle = "Auswirkung von Geschlechterdiversität auf Performance nach WBL-Index",
+       caption = "Quelle: Orbis (Bureau van Dijk), n = 16'661", y = "ROA")+
+  coord_cartesian(ylim = c(-5, 25))
+
+int_plot_gen_bi_2
+
+ggsave(plot = int_plot_gen_bi_2, "Exporte/Moderation/plot_gen_bi_2.png", width = 8, height = 6)
+
+
+```
+
+##Map visualization
+
+```{r}
+library(countrycode)
+
+mapdata <- map_data("world")
+converted_iso <- countrycode(mapdata$region, "country.name", "iso2c")
+mapdata$iso2 <- converted_iso
+
+countries_gen <- unique(companies_gen_final$country_id)
+
+gen_country <- data.frame(country = character(), bin = numeric(), blaus = numeric(), n_group = numeric(), stringsAsFactors = FALSE)
+
+for (c in countries_gen) {
+  df <- companies_gen_final %>%
+    select(country_id, roa, gender_bin, gender_blaus, n_employees, board_size) %>%
+    filter(country_id == c)
+  
+  df <- na.omit(df)
+  
+  if (nrow(df) < 100) {
+    next
+  }
+  
+  reg_bin <- lm(df, formula = roa ~ gender_bin + n_employees + board_size)
+  reg_blaus <- lm(df, formula = roa ~ gender_blaus + n_employees + board_size)
+  
+  coef_bin <-reg_bin$coefficients[2]
+  coef_blaus <-reg_blaus$coefficients[2]
+  
+  df2 <- data.frame(country = c, bin = coef_bin, blaus = coef_blaus, n_group = nrow(df))
+  
+  gen_country <- rbind(gen_country, df2)
+}
+
+gen_mapdata <- left_join(mapdata, gen_country, by=c("iso2"="country"))
+
+gen_blaus_map <- ggplot(gen_mapdata, aes(x=long, y=lat, group = group))+
+  geom_polygon(aes(fill=blaus), color = "black")+
+  scale_fill_gradient2(low = "red4", mid = "white", high = "blue4")+
+  theme_bw()+
+  labs(title = "Auswirkung Geschlechterdiversität auf Firmenperformance",
+       caption = "Quelle: Orbis (Bureau van Dijk), Nur Länder mit n > 100",
+       x = "", y="", fill = "Blau's Index")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+gen_blaus_map
+ggsave("Exporte/map_gen_blaus.png", plot = gen_blaus_map, height = 6, width = 10)
+```
+
