@@ -1,0 +1,411 @@
+---
+title: 'Anhang: R Code'
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      results = "hide",
+                      warning = F,
+                      message = F,
+                      fig.show='hide')
+```
+
+```{r results='hide', warning=FALSE, message=F}
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library (stargazer)
+library(summarytools)
+library(haven)
+library(visreg)
+library(magrittr)
+library(labelled)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(caTools)
+library(caret)
+library(table1)
+library(crosstable)
+library(officer)
+library(flextable)
+```
+
+```{r results='hide', warning=FALSE, message=F}
+setwd("C:/Users/samra/OneDrive/Dokumente/Universität/HS 22/Fortgeschrittene Statistik/Term Paper/")
+analytical_file = read_dta('Data/analyticalfile_full.dta')
+```
+
+
+Preprocessing:
+```{r}
+#varlist <- look_for(analytical_file)
+
+# attributes(analytical_file$isced17)
+# freq(analytical_file$isced17)
+
+data <- analytical_file %>%
+  select(gewicht = p17c46, 
+         körpergrösse = p17c45,
+         alter = age17,
+         geschlecht = sex17,
+         bildung = isced17,
+         einkommen = i17ptotn,
+         gemeinde_typ2 = com2_17,
+         kinder = ownkid17,
+         zivilstand = civsta17,
+         beruf_kat1 = is1maj17,
+         ersparnis = p17i165 
+         )
+
+data$BMI <- data$gewicht / ((data$körpergrösse/100)^2)
+data$geschlecht <- as_factor(data$geschlecht)
+# data$gemeinde_typ1 <- as_factor(data$gemeinde_typ1)
+data$gemeinde_typ2 <- as_factor(data$gemeinde_typ2)
+data$beruf_kat1 <- as_factor(data$beruf_kat1)
+# data$beruf_kat2 <- as_factor(data$beruf_kat2)
+data$zivilstand <- as_factor(data$zivilstand)
+data$bildung <- as_factor(data$bildung)
+
+summary_table <- table1(data=data, ~.)
+
+```
+
+Univariate Analyse BMI
+```{r}
+bmi_hist <- ggplot(data, aes(x=BMI))+
+  geom_histogram(fill='lightblue', color='black', breaks=seq(10, 70, 2.5))+
+  geom_segment(aes(x = 25, y = 2500, xend = 25, yend = 0), color="red", size=1.5)+
+  annotate("text", x=27, y=2100, label="Übergewicht", angle=270)+
+  geom_segment(aes(x = 30, y = 2500, xend = 30, yend = 0), color="blue", size=1.5)+
+  annotate("text", x=32, y=2100, label="Adipositas", angle=270)+
+  theme_bw()+
+  labs(title='Histogramm: BMI',
+       subtitle = "Verteilung der BMI Variable über die Stichprobe",
+       y = 'Anzahl Befragte',
+       x =  'BMI', caption = "Quelle: SHP (W17),  N=9'226")
+ggsave('Exports/bmi_hist.png', plot = bmi_hist, width = 10, height = 6)
+```
+
+```{r}
+data$übergewicht[data$BMI>=25] <- 1
+data$übergewicht[data$BMI<25] <- 0
+
+data$adipositas[data$BMI>=30] <- 1
+data$adipositas[data$BMI<30] <- 0
+```
+Train-Test-Split
+```{r}
+set.seed(111)
+
+data_noNA <- na.omit(data)
+
+
+ind <- sample(2, nrow(data_noNA),
+              replace = T,
+              prob = c(0.6, 0.4))
+train <- data_noNA[ind==1,] %>% subset(select = -c(BMI, adipositas, körpergrösse, gewicht))
+test <- data_noNA[ind==2,] %>% subset(select = -c(BMI, adipositas, körpergrösse, gewicht))
+test_bmi <- data_noNA[ind==2,] %>% subset(select = c(BMI))
+
+# determinanten_train <- subset(train, select = -c(BMI, adipositas, körpergrösse, gewicht, übergewicht))
+result_train <- select(train, übergewicht)
+# 
+# determinanten_test <- subset(test, select = -c(BMI, adipositas, körpergrösse, gewicht, übergewicht))
+result_test <- select(test, übergewicht)
+
+```
+
+Logistische Regression
+Vereinfachte logistische Reression zur veranschaulichung
+```{r}
+logr <- glm(data = train, family = binomial(link = "logit"), 
+            übergewicht ~ .)
+# summary(logr)
+
+
+log_simple <- glm(data = train, family = binomial(link = "logit"), 
+            übergewicht ~ alter + geschlecht + einkommen)
+summary(log_simple)
+
+```
+
+Funktion um Treshhold für logistische Regression festzulegen
+```{r}
+logr <- glm(data = train, family = binomial(link = "logit"), 
+            übergewicht ~ .)
+
+test_tresh <- test
+
+set_treshhold_log <- function(model, train, result, percentage) {
+  # train$prediction_log <- predict(model, newdata = train, type="response")
+  test_tresh$prediction_log <- predict(model, newdata = test, type="response")
+  
+  split_at = 0.5
+  
+  while (TRUE) {
+    # train$pred_log_bin[train$prediction_log >= split_at] <- 1
+    # train$pred_log_bin[train$prediction_log < split_at] <- 0
+    
+    test_tresh$pred_log_bin[test_tresh$prediction_log >= split_at] <- 1
+    test_tresh$pred_log_bin[test_tresh$prediction_log < split_at] <- 0
+    
+    # c_table <- ctable(train$pred_log_bin, result, prop = "t")
+    c_table <- ctable(test_tresh$pred_log_bin, result_test, prop = "t")
+    
+    cross_table <- c_table$cross_table
+    
+    found_positive <- cross_table[5]
+    total_positive <- cross_table[6]
+    
+    found_perc <- found_positive/total_positive
+
+    
+    if (between(found_perc, percentage-0.01, percentage+0.01)) {
+      print(cross_table)
+      print(paste0("Treshhold found at splitting point:", split_at))
+      return(split_at)
+    } else if (found_perc < percentage) {
+      split_at <- split_at - (percentage - found_perc)/10
+    } else if (found_perc > percentage) {
+      split_at <- split_at + (percentage + found_perc)/10
+    }
+    
+  }
+}
+
+threshold_log <- set_treshhold_log(logr, train, result_train, 0.7)
+
+```
+
+Decision Tree
+Grid-Search: beste kombination von Parametern finden
+```{r}
+set.seed(111)
+
+grid_search <- list(minsplit = c(30, 33, 35, 40, 50, 70),
+           maxdepth = c(3, 4, 5, 6),
+           cp = c(0.01, 0.003, 0.001)) %>% 
+  cross_d()
+
+mod <- function(...) {
+  rpart(data=train, übergewicht ~ ., control = rpart.control(...), method = "class")
+}
+
+grid_search <- grid_search %>% mutate(fit = pmap(grid_search, mod))
+
+compute_accuracy <- function(fit, test_features, test_labels) {
+  predicted <- predict(fit, test_features, type = "class")
+  mean(predicted == test_labels)
+}
+
+test_features <- test %>% select(-übergewicht)
+test_labels   <- test$übergewicht
+grid_search <- grid_search %>%
+  mutate(test_accuracy = map_dbl(fit, compute_accuracy,
+                                 test_features, test_labels))
+
+grid_search <- grid_search %>% 
+  arrange(desc(test_accuracy), desc(minsplit), maxdepth, desc(cp))
+grid_search[1:5,]
+minsplit_1 <- grid_search$minsplit[1]
+maxdepth_1 <- grid_search$maxdepth[1]
+cp_1 <- grid_search$cp[1]
+
+```
+
+Prior Parameter finden um 70% der Übergewichtigen zu finden
+```{r}
+set.seed(111)
+
+test_prior <- test
+
+set_treshhold_tree <- function(train, result, percentage) {
+  prior_perc = 0.4
+  while (TRUE) {
+    tree <- rpart(data=train, übergewicht ~ ., 
+            control = rpart.control(minsplit = minsplit_1,
+                                    maxdepth = maxdepth_1,
+                                    cp = cp_1), 
+            method = "class", 
+            parms = list(prior = c(prior_perc, 1-prior_perc)))
+  
+    # train$prediction_tree <- predict(tree, newdata = train, type="class")
+    
+    prediction_tree <- predict(tree, test_features, type='class')
+    test_prior$prediction_tree <- prediction_tree
+    
+
+    
+    # c_table <- ctable(train$prediction_tree, result, prop = "t")
+    c_table <- ctable(test_prior$prediction_tree, result_test, prop = "t")
+    
+    cross_table <- c_table$cross_table
+    
+    found_positive <- cross_table[5]
+    total_positive <- cross_table[6]
+    
+    found_perc <- found_positive/total_positive
+
+    if (between(found_perc, percentage-0.01, percentage+0.01)) {
+      print(cross_table)
+      print(paste0("Prior percentage fount at:", prior_perc))
+      return(prior_perc)
+    } else if (found_perc < percentage) {
+      prior_perc <- prior_perc - (percentage - found_perc)/10
+    } else if (found_perc > percentage) {
+
+      prior_perc <- prior_perc + (percentage + found_perc)/10
+    }
+  } 
+}
+
+prior_tree <- set_treshhold_tree(train, result_train, 0.7)
+```
+
+
+Logistische Regression Resutate
+```{r}
+test$log_pred <- predict(logr, newdata = test, type="response")
+
+test$log_pred_bin[test$log_pred >= threshold_log] <- 1
+test$log_pred_bin[test$log_pred < threshold_log] <- 0
+
+test$log_result[test$log_pred_bin==result_test$übergewicht] <- "Richtig"
+test$log_result[test$log_pred_bin!=result_test$übergewicht] <- "Falsch"
+
+log_table <- ctable(test$log_pred_bin, result_test)
+print(log_table, file = 'Exports/log_table.html')
+
+test$log_result <- relevel(as.factor(test$log_result), ref = "Falsch")
+
+
+log_plot <- cbind(test, test_bmi) %>%
+  ggplot(aes(x=BMI, fill=log_result))+
+  geom_histogram(position = "fill", binwidth = 5, breaks = seq(13, 35, 3))+
+  labs(title = "Logistische Regression: Übergewichts-Klassifikation Resultate nach BMI",
+       y="Anteil", x="BMI", fill = "Resultat", 
+       caption = "Quelle: SHP (W17),  N=1'920")+
+  scale_y_continuous(labels = scales::percent_format(scale = 100, accuracy = 1))+
+  theme_bw()
+log_plot
+ggsave("Exports/log_results_vis.png", plot = log_plot, width = 8, height = 5)
+
+log_crosstable <- crosstable(data = test, c(log_pred_bin), by=übergewicht, total = "both") %>%
+  as_flextable()
+log_crosstable
+save_as_docx(log_crosstable, path = "Exports/log_crosstable.docx")
+
+```
+
+Decision-Tree Resultate
+```{r}
+set.seed(111)
+
+tree <- rpart(data=train, übergewicht ~ ., 
+            control = rpart.control(minsplit = minsplit_1,
+                                    maxdepth = maxdepth_1,
+                                    cp = cp_1), 
+            method = "class", 
+            parms = list(prior = c(prior_tree, 1-prior_tree)))
+test$tree_pred <- predict(tree, test_features, type='class')
+
+test$tree_result[test$tree_pred==result_test$übergewicht] <- "Richtig"
+test$tree_result[test$tree_pred!=result_test$übergewicht] <- "Falsch"
+
+
+tree_table <- ctable(test$tree_pred, result_test)
+
+test$tree_result <- relevel(as.factor(test$tree_result), ref = "Falsch")
+
+tree_plot <- cbind(test, test_bmi) %>%
+  ggplot()+
+  geom_histogram(aes(x=BMI, fill=tree_result), position = "fill", breaks = seq(13, 35, 3))+
+  labs(title = "Decision-Tree: Übergewichts-Klassifikation Resultate nach BMI",
+       x="BMI", y="Anteil", fill="Resultat", 
+       caption = "Quelle: SHP (W17),  N=1'920")+
+  scale_y_continuous(labels = scales::percent_format(scale = 100, accuracy = 1))+
+  theme_bw()
+tree_plot
+ggsave("Exports/tree_results_vis.png", plot = tree_plot, width = 8, height = 5)
+
+tree_crosstable <- crosstable(data = test, c(tree_pred), by=übergewicht, total = "both") %>%
+  as_flextable()
+tree_crosstable
+save_as_docx(tree_crosstable, path = "Exports/tree_crosstable.docx")
+
+stargazer(logr, type = "html",
+          out = "Exports/logr_table.doc")
+
+summary(logr)
+```
+
+Visualisierung Decision-Tree
+```{r}
+
+set.seed(111)
+
+# attributes(train$bildung)
+# attributes(train$beruf_kat1)
+# attributes(train$gemeinde_typ2)
+
+# Ukodierung, da ansonsten die Variablenbeschreibungen keinen Platz haben auf der Visualisierung
+recode_bildung <- c("0: Not completed primary (compulsory) education" = "0",
+                    "1: Primary or first stage of basic education" = "1",
+                    "2: Lower secondary or Second stage of basic education" = "2",
+                    "3A: Upper secondary education (preparation for tertiary education)" = "3A",                             
+                    "3B: Upper secondary education (preparation for further prof. education)" = "3B",                        
+                    "3C: Upper secondary education (entrance into the labor market)" = "3C",                                 
+                    "4A: Post-secondary education non tertiary (preparation for an institution for higher education)" = "4A",
+                    "5A: First stage of tertiary education (general education)" = "5A",            
+                    "5B: First stage of tertiary education (professional education)" = "5B",
+                    "6: Second stage of tertiary education" = "6" )
+recode_beruf <- c("no corresponding ISCO-value" = "A",
+                  "other error, unplausible value" = "B",
+                  "inapplicable" = "C",           
+                  "no answer" = "D",                                
+                  "Armed forces" = "E",                          
+                  "Legislators, senior officials, managers" = "F",
+                  "Professionals" = "G",                        
+                  "Technicians and associate professionals" = "H", 
+                  "Clercs" = "I",                         
+                  "Service workers, market sales workers" = "J",    
+                  "Skilled agricultural and fishery workers" = "K", 
+                  "Craft and related trades workers" = "L",        
+                  "Plant and machine operater assemblers" = "M",   
+                  "Elementary occupations" = "N")
+
+recode_gemeinde <- c("other error" = "A",
+                  "filter error" = "B",
+                  "inapplicable" = "C",           
+                  "no answer" = "D",                                
+                  "does not know" = "E",                          
+                  "Centres" = "F",
+                  "Suburban communes" = "G",                        
+                  "Wealthy communes" = "H", 
+                  "Peripheral urban communes" = "I",                         
+                  "Tourist communes" = "J",    
+                  "Industrial and tertiary sector communes" = "K", 
+                  "Rural commuter communes" = "L",        
+                  "Mixed agricultural communes" = "M",   
+                  "Peripheral agricultural communes" = "N")
+
+plot_data <- train %>%
+  mutate(bildung = recode(bildung, !!!recode_bildung),
+         beruf_kat1 = recode(beruf_kat1, !!!recode_beruf),
+         gemeinde_typ2 = recode(gemeinde_typ2, !!! recode_gemeinde))
+
+tree_for_plot <- rpart(data=plot_data, übergewicht ~ ., 
+            control = rpart.control(minsplit = minsplit_1,
+                                    maxdepth = maxdepth_1,
+                                    cp = cp_1), 
+            method = "class", 
+            parms = list(prior = c(prior_tree, 1-prior_tree)))
+
+rpart.plot(tree_for_plot, type = 5)
+```
+
+
