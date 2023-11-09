@@ -1,4 +1,4 @@
-([https://github.com/samrauh/portfolio/tree/main/Projects/images/pexels-markus-spiske-2061168.jpg](https://github.com/samrauh/portfolio/blob/main/images/pexels-markus-spiske-2061168.jpg))
+![https://github.com/samrauh/portfolio/tree/main/Projects/images/pexels-markus-spiske-2061168.jpg](https://github.com/samrauh/portfolio/blob/main/images/pexels-markus-spiske-2061168.jpg)
 # Data Science Portfolio - Samuel Rauh
 
 This portfolio consists of the projects related to Data Science and quantitative analysis I have done for my university degree as well as hobby and learning purposes.
