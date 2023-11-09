@@ -21,15 +21,15 @@ For each of the categories I list some of the top projects, the full catalog can
 ### 1. University
 
 * [Bachelor Thesis - Where diversity works](https://github.com/samrauh/portfolio/tree/main/Projects/University/Bachelor-Thesis)
-* Computational Social Science - Newspaper coverage of wars in the 21st century
-* Markets and Norms - Price Discrimination in the Swiss Car Insurance Market
+* [Computational Social Science - Newspaper coverage of wars in the 21st century](https://github.com/samrauh/portfolio/tree/main/Projects/University/CSS%20-%20Newspaper%20coverage%20of%20wars%20i%20the%2021st%20century)
+* [Markets and Norms - Price Discrimination in the Swiss Car Insurance Market](https://github.com/samrauh/portfolio/tree/main/Projects/University/Markets%20%26%20Norms%20-%20Price%20discrimination%20in%20the%20insurance%20market)
 
 ### 2. Hobby/Learning
-* Newspaper Article Database
+* [Newspaper Article Database](https://github.com/samrauh/portfolio/tree/main/Projects/Hobby/Article%20Database)
 * NBA Shot prediction 
 
 ### 3. On the Job
 
-* Civilian Service at ETH: YLMI-Index - Automating the realease
-* Mediakeys: Automating Fotodocumentation
-* Mediakeys: Scraping URL's of Sports Clubs
+* [Civilian Service at ETH: YLMI-Index - From Data Gathering to Deployment](https://github.com/samrauh/portfolio/blob/main/Projects/On-the-Job/ETH%20CES%20-%20YLMI%20Index.md)
+* [Mediakeys: Automating Fotodocumentation](https://github.com/samrauh/portfolio/blob/main/Projects/On-the-Job/Mediakeys%20-%20Automated%20Photo%20Reporting.md)
+* [Mediakeys: Scraping URL's of Sports Clubs](https://github.com/samrauh/portfolio/blob/main/Projects/On-the-Job/Scraping%20URLs%20of%20Websites.md)
