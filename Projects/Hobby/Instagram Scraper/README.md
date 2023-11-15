@@ -1,3 +1,3 @@
 # Instagram Scraper
 
-> Keywords: Python, Webscraping, Visualization
+> Keywords: Python, Webscraping, Selenium, Visualization
