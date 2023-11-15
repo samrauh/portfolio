@@ -26,7 +26,8 @@ For each of the categories I list some of the top projects, the full catalog can
 
 ### 2. Hobby/Learning
 * [Newspaper Article Database](https://github.com/samrauh/portfolio/tree/main/Projects/Hobby/Article%20Database)
-* NBA Shot prediction 
+* [Instagram Scraper](https://github.com/samrauh/portfolio/tree/main/Projects/Hobby/Instagram%20Scraper)
+* [Newspaper Articles - Dimensionality Reducation](https://github.com/samrauh/portfolio/tree/main/Projects/Hobby/Newspaper%20Articles%20-%20Distance%20Metric)
 
 ### 3. On the Job
 
