@@ -10,3 +10,4 @@
 >
 > Date: September 2020 - August 2023
 
+This folder covers some of my projects and thesis I completed for my bachelor's degree.
