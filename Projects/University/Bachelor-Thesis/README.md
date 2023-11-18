@@ -7,7 +7,7 @@
 > 
 > Final Mark: 6/6
 >
-> Award: 
+> Award for autstanding Bachelor Thesis
 
 This is my thesis for my bachelor in Sociology.
 
