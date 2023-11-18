@@ -13,7 +13,7 @@
 > Award for outstanding Bachelor Thesis
 
 
-This is my bachelor thesis for my major in sociology I wrote under Prof. Dr. Jörg Rössel who was at that time the head of Departmant at University of Zurich for Sociology.
+This is my bachelor thesis for my major in sociology I wrote under Prof. Dr. Jörg Rössel who was at that time the head of Departmant at the University of Zurich.
 
 #### Abstract:
 
