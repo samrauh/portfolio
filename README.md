@@ -5,7 +5,7 @@ This portfolio consists of the projects related to Data Science and quantitative
 
 ## About Me
 
-In summer 2023 I finished my bachelors degree in Sociology at the University of Zurich. I realized quickly that my main interests lay in quantitative research. Lukily for me, the Sociological Institute in Zurich has its focus on qualitative research and correspondingly focuses its teaching.
+In summer 2023 I finished my bachelors degree in Sociology at the University of Zurich. I realized quickly that my main interests lay in quantitative research. Lukily for me, the Sociological Institute in Zurich has its focus on quantitative research and correspondingly focuses its teaching more on statistics.
 With my minor in People Oriented Computing I was able to extend my coding skills and I got a better view at the world of computer science. I really enjoyed it and by the third semester it was clear for me that I want to porsue a career further in the direction of data science.
 
 ## Projects
@@ -16,7 +16,7 @@ My projects can be split up into three categories according to their "origin".
 2. On the job
 3. Hobby/Learning
 
-For each of the categories I list some of the top projects, the full catalog can be seen in the according folder.
+For each of the categories I list some of the top projects, the full catalog can be seen in the correstponding folders.
 
 ### 1. University
 
