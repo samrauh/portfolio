@@ -1,5 +1,5 @@
 # Bachelor Thesis - Where diversity works
-> Keywords: R, Statistics, Quantitatife Analysis, Scientific Techniques
+> Keywords: R, Statistics, Quantitative Analysis, Scientific Techniques, Scientific Writing
 >
 > Semester: Spring Semester 2023
 > 
