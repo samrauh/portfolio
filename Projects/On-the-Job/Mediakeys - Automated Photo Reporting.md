@@ -1,4 +1,4 @@
-# Mediakeys - Automation of Photo REportings
+# Mediakeys - Automation of Photo Reportings
 
 >Keyswords: Python, Tkinter, GUI, Workflow Automation
 
