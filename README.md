@@ -33,4 +33,3 @@ For each of the categories I list some of the top projects, the full catalog can
 
 * [Civilian Service at ETH: YLMI-Index - From Data Gathering to Deployment](https://github.com/samrauh/portfolio/blob/main/Projects/On-the-Job/ETH%20CES%20-%20YLMI%20Index.md)
 * [Mediakeys: Automating Fotodocumentation](https://github.com/samrauh/portfolio/blob/main/Projects/On-the-Job/Mediakeys%20-%20Automated%20Photo%20Reporting.md)
-* [Mediakeys: Scraping URL's of Sports Clubs](https://github.com/samrauh/portfolio/blob/main/Projects/On-the-Job/Scraping%20URLs%20of%20Websites.md)
