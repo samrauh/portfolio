@@ -29,12 +29,12 @@ def subsperdate(liste):
                 username = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.NAME, "username"))
                 )
-                username.send_keys("datascrapexyz01")
+                username.send_keys("XXXX")
 
                 password = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.NAME, "password"))
                 )
-                password.send_keys("MineMine123")
+                password.send_keys("XXXX")
                 password.send_keys(Keys.RETURN)
             except:
                 driver.quit()
