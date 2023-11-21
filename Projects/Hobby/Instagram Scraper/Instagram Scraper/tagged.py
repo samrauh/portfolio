@@ -23,10 +23,10 @@ mouse.click(Button.left, 1)
 time.sleep(1)
 
 username = driver.find_element_by_name("username")
-username.send_keys("datascrapexyz01")
+username.send_keys("XXXX")
 
 password = driver.find_element_by_name("password")
-password.send_keys("MineMine123")
+password.send_keys("XXXX")
 password.send_keys(Keys.RETURN)
 
 
