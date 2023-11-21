@@ -96,7 +96,3 @@ class InstaBot:
         print(f"years:{year}, moths:{month}, days:{day}")
         print(f"hours:{hours}, minutes:{minutes}, seconds:{seconds}")
 
-
-
-search = InstaBot("datascrapexyz01", "MineMine123")
-search.tagged("kyliejenner")
