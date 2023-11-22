@@ -10,7 +10,7 @@ With my minor in People-Oriented Computing I was able to extend my coding skills
 
 ## Projects
 
-My projects can be split up into three categories according to their "origin".
+My projects can be split up into three categories.
 
 1. University
 2. On the job
