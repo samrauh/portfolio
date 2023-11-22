@@ -26,6 +26,7 @@ For each of the categories I list some of the projects, the full catalog can be 
 
 ### 2. Hobby/Learning
 * [Newspaper Article Database](https://github.com/samrauh/portfolio/tree/main/Projects/Hobby/Article%20Database)
+* [NBA Shot Predictions](https://github.com/samrauh/portfolio/tree/main/Projects/Hobby/NBA%20Shot%20Prediction)
 
 ### 3. On the Job
 
